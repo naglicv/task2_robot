@@ -19,11 +19,13 @@ import time
 
 from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import Quaternion, PoseStamped, PoseWithCovarianceStamped, PointStamped
+from geometry_msgs.msg import Quaternion, PoseStamped, PoseWithCovarianceStamped, PointStamped, Twist
 from lifecycle_msgs.srv import GetState
 from nav2_msgs.action import Spin, NavigateToPose
 from turtle_tf2_py.turtle_tf2_broadcaster import quaternion_from_euler
 from visualization_msgs.msg import Marker
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge, CvBridgeError
 
 from irobot_create_msgs.action import Dock, Undock
 from irobot_create_msgs.msg import DockStatus
@@ -72,6 +74,10 @@ class RobotCommander(Node):
         self.status = None
         self.initial_pose_received = False
         self.is_docked = None
+        self.camera_image = None
+
+        self.bridge = CvBridge()
+
 
         # ROS2 subscribers
         self.create_subscription(DockStatus,
@@ -89,6 +95,11 @@ class RobotCommander(Node):
                                                           self._peopleMarkerCallback,
                                                           QoSReliabilityPolicy.BEST_EFFORT)
 
+        self.camera_sub = self.create_subscription(Image,
+                                                   '/top_camera/rgb/preview/img_raw',
+                                                   self.camera_callback,
+                                                   qos_profile_sensor_data)
+
         # ROS2 publishers
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped,
                                                       'initialpose',
@@ -96,6 +107,10 @@ class RobotCommander(Node):
         self.face_pub = self.create_publisher(PointStamped,
                                                       'face',
                                                       qos_profile)
+
+        self.vel_pub = self.create_publisher(Twist,
+                                             'cmd_vel', 
+                                             10)
 
         # ROS2 Action clients
         self.nav_to_pose_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
@@ -108,7 +123,7 @@ class RobotCommander(Node):
         self.hellos_said = 0
         self.rings_detected = 0
 
-        self.audio_engine = pyttsx3.init()
+        #self.audio_engine = pyttsx3.init()
 
         self.get_logger().info(f"Robot commander has been initialized!")
 
@@ -335,6 +350,130 @@ class RobotCommander(Node):
         self.get_logger().debug(msg)
         return
 
+    """def camera_callback(self, msg):
+        try:
+            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            
+            height, width, _ = cv.image.shape
+            size = min(height, width)
+            cv_image = cv_image[:size, :size]
+
+            half_size = size // 2
+            top_left = cv_image[:half_size, :half_size]
+            top_right = cv_image[:half_size, half_size:]
+            bottom_left = cv_image[half_size:, :half_size]
+            bottom_right = cv_image[half_size:, half_size:]
+
+            # Calculate the amount of black color in each square
+            black_pixels_top_left = np.sum(top_left < [5, 5, 5])  
+            black_pixels_top_right = np.sum(top_right < [5, 5, 5])
+            black_pixels_bottom_left = np.sum(bottom_left < [5, 5, 5])
+            black_pixels_bottom_right = np.sum(bottom_right < [5, 5, 5])
+
+            # Determine which square has the most black color
+            black_counts = [black_pixels_top_left, black_pixels_top_right, black_pixels_bottom_left, black_pixels_bottom_right]
+            most_black_square_index = np.argmax(black_counts)
+
+            velocity_msg = Twist()
+            if most_black_square_index == 0:  # Top Left
+                # Turn left and then move forward
+                velocity_msg.angular.z = 0.3  # Angular speed (turn left)
+                velocity_msg.linear.x = 0.1  # Forward speed
+            elif most_black_square_index == 1:  # Top Right
+                # Turn right and then move forward
+                velocity_msg.angular.z = -0.3  # Angular speed (turn right)
+                velocity_msg.linear.x = 0.1  # Forward speed
+            elif most_black_square_index == 2:  # Bottom Left
+                # Turn left and then move forward
+                velocity_msg.angular.z = 0.3  # Angular speed (turn left)
+                velocity_msg.linear.x = 0.1  # Forward speed
+            elif most_black_square_index == 3:  # Bottom Right
+                # Turn right and then move forward
+                velocity_msg.angular.z = -0.3  # Angular speed (turn right)
+                velocity_msg.linear.x = 0.1  # Forward speed
+
+
+            # Publish the velocity command
+            self.velocity_publisher.publish(velocity_msg)
+
+        except CvBridgeError as e:
+            self.get_logger().error(f"Error converting image: {e}")"""
+
+
+    def camera_callback(self, msg):
+        try:
+            #this line should convert img to cv-format but it it not working :(
+            #Maybe I have to install cv_bridge lib but i cannot cause i am not sudo 
+            #So i am not sure how this works (cannot check)
+            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8") 
+            self.camera_image = cv_image
+        except CvBridgeError as e:
+            self.get_logger().error(f"Error converting image: {e}")
+            
+    def park(self):
+        while not self.camera_image:
+            self.debug('Waiting for camera image...')
+            time.sleep(0.1) 
+        #Code from now does next:
+        #   Takes img and divides it in 4 equal parts.
+        #   Looks which part contains most black color (since parking spot is circle with black edge)
+        #   In this code I am considering that the robot is in front of box so in every iteration he moves only forward and a little to the side based on logic implemented
+        #   It publishes to the topic cmd_vel and moves robot! (not sure if it works since I cannot check)
+        #For example:
+        #   If most black is on top left corner, robot moves a little forward and little to the right (oposite of LEFT)
+        #TODO:
+        #   Put this code in while loop and make some logic for it to stop at some condition (if there is no black in img???)
+        #   To do this we should check how camera is positioned and try to figure out how the img loos like from camera view
+
+        try:
+            #we take img 
+            cv_image = self.camera_image
+            #divide it in 4 equal parts
+            height, width, _ = cv.image.shape
+            size = min(height, width)
+            cv_image = cv_image[:size, :size]
+
+            half_size = size // 2
+            top_left = cv_image[:half_size, :half_size]
+            top_right = cv_image[:half_size, half_size:]
+            bottom_left = cv_image[half_size:, :half_size]
+            bottom_right = cv_image[half_size:, half_size:]
+
+            #calculate the amount of black color in each square
+            black_pixels_top_left = np.sum(top_left < [5, 5, 5])  
+            black_pixels_top_right = np.sum(top_right < [5, 5, 5])
+            black_pixels_bottom_left = np.sum(bottom_left < [5, 5, 5])
+            black_pixels_bottom_right = np.sum(bottom_right < [5, 5, 5])
+
+            #determine which square has the most black color
+            black_counts = [black_pixels_top_left, black_pixels_top_right, black_pixels_bottom_left, black_pixels_bottom_right]
+            most_black_square_index = np.argmax(black_counts)
+
+            velocity_msg = Twist()
+            if most_black_square_index == 0:  #top Left
+                #turn left and then move forward
+                velocity_msg.angular.z = 0.3  #angular speed (turn left)
+                velocity_msg.linear.x = 0.1  #forward speed
+            elif most_black_square_index == 1:  #top Right
+                #turn right and then move forward
+                velocity_msg.angular.z = -0.3  #angular speed (turn right)
+                velocity_msg.linear.x = 0.1  #forward speed
+            elif most_black_square_index == 2:  #bottom Left
+                #turn left and then move forward
+                velocity_msg.angular.z = 0.3  #angular speed (turn left)
+                velocity_msg.linear.x = 0.1  #forward speed
+            elif most_black_square_index == 3:  #bottom Right
+                #turn right and then move forward
+                velocity_msg.angular.z = -0.3  #angular speed (turn right)
+                velocity_msg.linear.x = 0.1  #aorward speed
+
+            #publish the velocity command
+            self.velocity_publisher.publish(velocity_msg)
+            self.debug('Parking the robot...')
+        except CvBridgeError as e:
+            self.get_logger().error(f"Error converting image: {e}")"""
+           
+
     def check_approach(self, marked_poses, point):
         self.get_logger().info(f"IM LOOKING FOR FACES")
         #Check if there is a new 'people_marker' pose to go to first
@@ -464,54 +603,25 @@ def main(args=None):
 
     # Finally send it a goal to reach
     #               1                2                  3                   4                 5                  6                7                   8                  9                 10                11              12               13                  14
-    points = [[-0.9, -0.4, 0,00],[-1.6, 1.22, 0.0],[-1.41, 4.36,-0.165],[-1.35, 3.17,-0.568],[1.9,3.04,0.57],[2.48,1.81,0.00247],[0.39,1.87,-0.207],[1.34,0.308,0.0582],[2.23,-1.78,-1],[3.27,-1.4,0.961],[1.14,-1.8,-1.0],[-0.16,-1.33,0.832]]
+    ############points = [[-0.9, -0.4, 0,00],[-1.6, 1.22, 0.0],[-1.41, 4.36,-0.165],[-1.35, 3.17,-0.568],[1.9,3.04,0.57],[2.48,1.81,0.00247],[0.39,1.87,-0.207],[1.34,0.308,0.0582],[2.23,-1.78,-1],[3.27,-1.4,0.961],[1.14,-1.8,-1.0],[-0.16,-1.33,0.832]]
     # ,[-0.7, 1.42,-0.584] 3
     # [-0.464, 0.18, 0,00]
     # [1.5,-0.4,-0.069] --> 10
     # [2.23,-1.78,-1] --> 11
     # [0.63,-0.76,0.458],[1.5,-0.4,-0.069]   9 and 10 possitions!!!
 
-    marked_poses = []
-    i = 0
-    while len(points) > i or rc.rings_detected <= 4:
-        point = points[i]
-        # If no new 'people_marker' pose, proceed with the next point in the list
-        goal_pose = PoseStamped()
-        goal_pose.header.frame_id = 'map'
-        goal_pose.header.stamp = rc.get_clock().now().to_msg()
-        goal_pose.pose.position.x = point[0]
-        goal_pose.pose.position.y = point[1]
-        goal_pose.pose.orientation = rc.YawToQuaternion(point[2])
+    #
+    point = [-1.07,1.27,0.481]
+    goal_pose = PoseStamped()
+    goal_pose.header.frame_id = 'map'
+    goal_pose.header.stamp = rc.get_clock().now().to_msg()
+    goal_pose.pose.position.x = point[0]
+    goal_pose.pose.position.y = point[1]
+    goal_pose.pose.orientation = rc.YawToQuaternion(point[2])
+    rc.goToPose(goal_pose)
 
-        rc.goToPose(goal_pose)
 
-        while not rc.isTaskComplete():
-            rc.info("Waiting for the task to complete...")
-            time.sleep(1)
-
-        rc.latest_people_marker_pose = None
-        spin_dist = 0.5 * math.pi
-        n = 0
-        while n < 4:
-            rc.spin(spin_dist)
-            n+=1
-            while not rc.isTaskComplete():
-                rc.info("Waiting for the task to complete...")
-                rc.get_logger().info(f"curr pose x: {rc.current_pose.pose.position.x} y: {rc.current_pose.pose.position.y} z: {rc.current_pose.pose.orientation.z}")
-                approached_face, marked_poses = rc.check_approach(marked_poses, point)
-                if(rc.hellos_said >= 3):
-                    time.sleep(2)
-                    rc.info("I have greeted 3 people, I am done!")
-                    rc.greet_face("I am done with this shit")
-                    rc.destroyNode()
-                    break
-                if approached_face:
-                    n = 0
-                # rc.check_approach(marked_poses, rc.current_pose)
-                time.sleep(1)
-        i+=1
-
-    # TASK 1
+    # TASK 1                    RETURN TO NORMAL WHEN FINISHED
     # marked_poses = []
     # i = 0
     # while len(points) > i or rc.hellos_said <= 3:
@@ -551,6 +661,7 @@ def main(args=None):
     #             # rc.check_approach(marked_poses, rc.current_pose)
     #             time.sleep(1)
     #     i+=1
+    #                          END OF RETURN TO NORMAL WHEN FINISHED
     rc.destroyNode()
     # And a simple example
 if __name__=="__main__":
