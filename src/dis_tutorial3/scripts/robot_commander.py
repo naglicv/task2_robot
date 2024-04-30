@@ -95,6 +95,7 @@ class RobotCommander(Node):
                                                           self._peopleMarkerCallback,
                                                           QoSReliabilityPolicy.BEST_EFFORT)
 
+        #for now best coords are [0.,0.9,1.3,1.0] for look_for_parking? (better possible?)
         self.camera_sub = self.create_subscription(Image,
                                                    '/top_camera/rgb/preview/img_raw',
                                                    self.camera_callback,
