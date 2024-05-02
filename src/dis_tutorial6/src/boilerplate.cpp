@@ -16,7 +16,19 @@
 
 using std::placeholders::_1;
 
-void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) { std::cout << "callback" << std::endl; }
+void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+    std::cout << "Point cloud callback" << std::endl;
+
+    // Placeholder for plane and cylinder segmentation logic
+    // Convert ROS2 message to PCL point cloud
+    // pcl::PCLPointCloud2* pcl_pc = new pcl::PCLPointCloud2;
+    // pcl_conversions::toPCL(*msg, *pcl_pc);
+    // pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    // pcl::fromPCLPointCloud2(*pcl_pc, *cloud);
+
+    // Plane and cylinder segmentation logic here
+    // ...
+}
 
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);

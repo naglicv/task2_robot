@@ -49,12 +49,10 @@ class RingDetector(Node):
         cv2.namedWindow("Binary Image", cv2.WINDOW_NORMAL)
         cv2.namedWindow("Detected contours", cv2.WINDOW_NORMAL)
         cv2.namedWindow("Detected rings", cv2.WINDOW_NORMAL)
-        cv2.namedWindow("Depth window", cv2.WINDOW_NORMAL)
-
-        self.depth_info = None        
+        cv2.namedWindow("Depth window", cv2.WINDOW_NORMAL)        
 
     def image_callback(self, data):
-        # self.get_logger().info(f"I got a new image! Will try to find rings...")
+        self.get_logger().info(f"I got a new image! Will try to find rings...")
 
         try:
             cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
@@ -105,25 +103,15 @@ class RingDetector(Node):
         for n in range(len(elps)):
             for m in range(n + 1, len(elps)):
                 # e[0] is the center of the ellipse (x,y), e[1] are the lengths of major and minor axis (major, minor), e[2] is the rotation in degrees
-                depth_info_local = self.depth_info
+                
                 e1 = elps[n]
                 e2 = elps[m]
                 dist = np.sqrt(((e1[0][0] - e2[0][0]) ** 2 + (e1[0][1] - e2[0][1]) ** 2))
                 angle_diff = np.abs(e1[2] - e2[2])
 
-                # this check seems weird but it works for distinguising rings on the ground vs high up (the ones we want)
-                if e1[0][1] > 80 or e2[0][1] > 80:
-                    continue
-
-                cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
-                cv2.imshow("Non Depth verified rings",cv_image)    
-
                 # The centers of the two elipses should be within 5 pixels of each other (is there a better treshold?)
                 if dist >= 5:
                     continue
-
-                # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
-                # cv2.imshow("Non Depth verified rings",cv_image)
 
                 # The rotation of the elipses should be whitin 4 degrees of eachother
                 if angle_diff>4:
@@ -144,16 +132,17 @@ class RingDetector(Node):
                 else:
                     continue # if one ellipse does not contain the other, it is not a ring
                 
-                
-                # Verify detection with depth sensors to avoid cubes, 2d rings on the wall
-                if self.detect_depth_ring(depth_info_local, e1[0][0], e1[0][1], cv_image) is not True:
-                    continue
-                # ------------------
+                # # The widths of the ring along the major and minor axis should be roughly the same
+                # border_major = (le[1][1]-se[1][1])/2
+                # border_minor = (le[1][0]-se[1][0])/2
+                # border_diff = np.abs(border_major - border_minor)
 
+                # if border_diff>4:
+                #     continue
                     
                 candidates.append((e1,e2))
 
-        # print("Processing is done! found", len(candidates), "candidates for rings")
+        print("Processing is done! found", len(candidates), "candidates for rings")
 
         # Plot the rings on the image
         for c in candidates:
@@ -179,6 +168,11 @@ class RingDetector(Node):
             y2 = int(center[1] + size / 2)
             y_min = y1 if y1 > 0 else 0
             y_max = y2 if y2 < cv_image.shape[1] else cv_image.shape[1]
+
+            # Set the point to the center of the detected ring
+            self.get_logger().info(f"Publishing the center of the ring")
+            self.get_logger().info(f"e1: {e1}")
+            self.get_logger().info(f"e2: {e2}")
 
             # Assuming e1 and e2 are the ellipses you want to publish
             center_e1 = e1[0]
@@ -206,56 +200,7 @@ class RingDetector(Node):
                 cv2.waitKey(1)
 
 
-    def detect_depth_ring(self, depth_info, center_x, center_y, cv_image):
-        np.savetxt("depth_info", depth_info, fmt='%f', delimiter=', ')
-        min_radius = 1
-        max_radius = 300
-        min_circularity = 0.6
-        max_hole_area_ratio = 0.5
 
-        # Thresholding: Find pixels within the specified depth range
-        mask = np.logical_and(depth_info >= min_radius, depth_info <= max_radius)
-
-        # Find contours in the mask
-        contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-
-         
-        # Loop through each contour
-        for contour in contours:
-            # Fit a circle to the contour
-            (x,y), radius = cv2.minEnclosingCircle(contour)
-
-            if radius > 30:
-                continue
-
-            # Check if the center of the circle is within a certain distance from the specified center
-            if abs(abs(x) - abs(center_x)) >= 20.0 or abs(abs(y) - abs(center_y)) >= 20.0:
-                continue
-
-            # Draw the circle on the image for visualization
-            cv2.circle(cv_image, (int(x), int(y)), int(radius), (0, 0, 255))
-            # cv2.circle(cv_image, (int(x),int(y)), int(radius), (0, 0, 255))
-            cv2.imshow("Depth Detected rings",cv_image)
-
-            area = cv2.contourArea(contour)
-
-            if area <= 4.0:
-                continue
-
-            depth_center = depth_info[int(center_y), int(center_x)]
-
-            if depth_center < 0.3:
-                # Ring detected
-                return True
-            else:
-                # No ring detected
-                continue
-
-
-        return False  # No ring detected
-
-
-    
 
 
 
@@ -273,8 +218,6 @@ class RingDetector(Node):
         image_1 = image_1/np.max(image_1)*255
 
         image_viz = np.array(image_1, dtype= np.uint8)
-
-        self.depth_info = depth_image
 
         cv2.imshow("Depth window", image_viz)
         cv2.waitKey(1)

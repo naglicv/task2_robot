@@ -218,7 +218,7 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     marker.color.a = 1.0f;
 
     // marker.lifetime = rclcpp::Duration(1,0);
-    marker.lifetime = rclcpp::Duration(10, 0);
+    marker.lifetime = rclcpp::Duration(0,0);
 
     marker_pub->publish(marker);
 

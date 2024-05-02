@@ -79,23 +79,17 @@ class RobotCommander(Node):
                                  self._dockCallback,
                                  qos_profile_sensor_data)
 
-        self.localization_pose_sub = self.create_subscription(PoseWithCovarianceStamped,
-                                                              'amcl_pose',
+        self.localization_pose_sub = self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose',
                                                               self._amclPoseCallback,
                                                               amcl_pose_qos)
 
-        self.people_marker_sub = self.create_subscription(Marker,
-                                                          'people_marker',
+        self.people_marker_sub = self.create_subscription(Marker, 'people_marker',
                                                           self._peopleMarkerCallback,
                                                           QoSReliabilityPolicy.BEST_EFFORT)
 
         # ROS2 publishers
-        self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped,
-                                                      'initialpose',
-                                                      10)
-        self.face_pub = self.create_publisher(PointStamped,
-                                                      'face',
-                                                      qos_profile)
+        self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
+        self.face_pub = self.create_publisher(PointStamped, 'face', qos_profile)
 
         # ROS2 Action clients
         self.nav_to_pose_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
@@ -108,7 +102,7 @@ class RobotCommander(Node):
         self.hellos_said = 0
         self.rings_detected = 0
 
-        self.audio_engine = pyttsx3.init()
+        #self.audio_engine = pyttsx3.init()
 
         self.get_logger().info(f"Robot commander has been initialized!")
 
@@ -474,42 +468,45 @@ def main(args=None):
     marked_poses = []
     i = 0
     while len(points) > i or rc.rings_detected <= 4:
-        point = points[i]
-        # If no new 'people_marker' pose, proceed with the next point in the list
-        goal_pose = PoseStamped()
-        goal_pose.header.frame_id = 'map'
-        goal_pose.header.stamp = rc.get_clock().now().to_msg()
-        goal_pose.pose.position.x = point[0]
-        goal_pose.pose.position.y = point[1]
-        goal_pose.pose.orientation = rc.YawToQuaternion(point[2])
+        try:
+            point = points[i]
+            # If no new 'people_marker' pose, proceed with the next point in the list
+            goal_pose = PoseStamped()
+            goal_pose.header.frame_id = 'map'
+            goal_pose.header.stamp = rc.get_clock().now().to_msg()
+            goal_pose.pose.position.x = point[0]
+            goal_pose.pose.position.y = point[1]
+            goal_pose.pose.orientation = rc.YawToQuaternion(point[2])
 
-        rc.goToPose(goal_pose)
+            rc.goToPose(goal_pose)
 
-        while not rc.isTaskComplete():
-            rc.info("Waiting for the task to complete...")
-            time.sleep(1)
-
-        rc.latest_people_marker_pose = None
-        spin_dist = 0.5 * math.pi
-        n = 0
-        while n < 4:
-            rc.spin(spin_dist)
-            n+=1
             while not rc.isTaskComplete():
                 rc.info("Waiting for the task to complete...")
-                rc.get_logger().info(f"curr pose x: {rc.current_pose.pose.position.x} y: {rc.current_pose.pose.position.y} z: {rc.current_pose.pose.orientation.z}")
-                approached_face, marked_poses = rc.check_approach(marked_poses, point)
-                if(rc.hellos_said >= 3):
-                    time.sleep(2)
-                    rc.info("I have greeted 3 people, I am done!")
-                    rc.greet_face("I am done with this shit")
-                    rc.destroyNode()
-                    break
-                if approached_face:
-                    n = 0
-                # rc.check_approach(marked_poses, rc.current_pose)
                 time.sleep(1)
-        i+=1
+
+            rc.latest_people_marker_pose = None
+            spin_dist = 0.5 * math.pi
+            n = 0
+            while n < 4:
+                rc.spin(spin_dist)
+                n+=1
+                while not rc.isTaskComplete():
+                    rc.info("Waiting for the task to complete...")
+                    rc.get_logger().info(f"curr pose x: {rc.current_pose.pose.position.x} y: {rc.current_pose.pose.position.y} z: {rc.current_pose.pose.orientation.z}")
+                    approached_face, marked_poses = rc.check_approach(marked_poses, point)
+                    if(rc.hellos_said >= 3):
+                        time.sleep(2)
+                        rc.info("I have greeted 3 people, I am done!")
+                        rc.greet_face("I am done with this shit")
+                        rc.destroyNode()
+                        break
+                    if approached_face:
+                        n = 0
+                    # rc.check_approach(marked_poses, rc.current_pose)
+                    time.sleep(1)
+            i+=1
+        except IndexError:
+            print(f"Error: Attempted to access index {i} in points list, which has {len(points)} elements.")
 
     # TASK 1
     # marked_poses = []

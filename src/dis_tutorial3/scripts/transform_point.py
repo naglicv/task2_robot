@@ -28,6 +28,8 @@ class TranformPoints(Node):
 
         self.face_point_in_robot_frame = None
         self.ring_point_in_robot_frame = None
+        self.cylinder_point_in_robot_frame = None
+        self.parking_space_point_in_robot_frame = None
         # Basic ROS stuff
         timer_frequency = 1
         timer_period = 1/timer_frequency
@@ -39,100 +41,74 @@ class TranformPoints(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # For publishing the face markers
+        # For publishing the markers
         self.marker_pub = self.create_publisher(Marker, "/breadcrumbs", QoSReliabilityPolicy.BEST_EFFORT)
         self.face_sub = self.create_subscription(PointStamped, "/face", self.face_callback, qos_profile)
-
-        # For publishing the ring markers
         self.ring_sub = self.create_subscription(PointStamped, "/ring", self.ring_callback, qos_profile)
+        #self.cylinder_sub = self.create_subscription(PointStamped, "/cylinder", self.cylinder_callback, qos_profile)
+        #self.cylinder_sub = self.create_subscription(PointStamped, "/detected_cylinder", self.cylinder_callback, qos_profile)
+        #self.parking_space_sub = self.create_subscription(PointStamped, "/parking_space", self.parking_space_callback, qos_profile)
 
         # Create a timer, to do the main work.
         self.timer = self.create_timer(timer_period, self.timer_callback)
 
-
     def face_callback(self, msg):
-        # Create a PointStamped in the /base_link frame of the robot
+        self.get_logger().info(f"Received face point: {msg.point.x}, {msg.point.y}, {msg.point.z}")
         self.face_point_in_robot_frame = msg
 
     def ring_callback(self, msg):
-        # Create a PointStamped in the /base_link frame of the robot
+        self.get_logger().info(f"Received ring point: {msg.point.x}, {msg.point.y}, {msg.point.z}")
         self.ring_point_in_robot_frame = msg
 
+    def cylinder_callback(self, msg):
+        self.get_logger().info(f"Received cylinder point: {msg.point.x}, {msg.point.y}, {msg.point.z}")
+
+        self.cylinder_point_in_robot_frame = msg
+
+    def parking_space_callback(self, msg):
+        self.get_logger().info(f"Received parking space point: {msg.point.x}, {msg.point.y}, {msg.point.z}")
+        self.parking_space_point_in_robot_frame = msg
 
     def timer_callback(self):
-        # Create a PointStamped in the /base_link frame of the robot
-        # The point is located 0.5m in from of the robot
-        # "Stamped" means that the message type contains a Header
-        # point_in_robot_frame = PointStamped()
-        # point_in_robot_frame.header.frame_id = "/base_link"
-        # point_in_robot_frame.header.stamp = self.get_clock().now().to_msg()
+        points_to_transform = [
+            (self.face_point_in_robot_frame, "face", [1.0, 0.0, 0.0]), # Red for face
+            (self.ring_point_in_robot_frame, "ring", [0.0, 1.0, 0.0]), # Green for ring
+            (self.cylinder_point_in_robot_frame, "cylinder", [0.0, 0.0, 1.0]), # Blue for cylinder
+            (self.parking_space_point_in_robot_frame, "parking_space", [1.0, 1.0, 0.0]) # Yellow for parking space
+        ]
 
-        # point_in_robot_frame.point.x = 0.5
-        # point_in_robot_frame.point.y = 0.
-        # point_in_robot_frame.point.z = 0. 
+        for point, label, color in points_to_transform:
+            if point is not None:
+                self.get_logger().info(f"--> Transforming {label}")
 
-        # Now we look up the transform between the base_link and the map frames
-        # and then we apply it to our PointStamped
-        if self.face_point_in_robot_frame is not None:
-            time_now = rclpy.time.Time()
-            timeout = Duration(seconds=0.1)
-            try:
-                # An example of how you can get a transform from /base_link frame to the /map frame
-                # as it is at time_now, wait for timeout for it to become available
-                trans = self.tf_buffer.lookup_transform("map", "base_link", time_now, timeout)
-                self.get_logger().info(f"Looks like the transform is available.")
+                time_now = rclpy.time.Time()
+                timeout = Duration(seconds=0.1)
+                try:
+                    trans = self.tf_buffer.lookup_transform("map", "base_link", time_now, timeout)
+                    self.get_logger().info(f"Looks like the transform is available for {label}.")
 
-                # Now we apply the transform to transform the point_in_robot_frame to the map frame
-                # The header in the result will be copied from the Header of the transform
-                point_in_map_frame = tfg.do_transform_point(self.face_point_in_robot_frame, trans)
-                self.get_logger().info(f"We transformed a PointStamped!")
+                    point_in_map_frame = tfg.do_transform_point(point, trans)
+                    self.get_logger().info(f"We transformed a PointStamped for {label}!")
 
-                # If the transformation exists, create a marker from the point, in order to visualize it in Rviz
-                marker_in_map_frame = self.create_marker(point_in_map_frame, self.marker_id)
+                    marker_in_map_frame = self.create_marker(point_in_map_frame, self.marker_id, label, color)
 
-                # Publish the marker
-                self.marker_pub.publish(marker_in_map_frame)
-                self.get_logger().info(f"The marker has been published to /breadcrumbs. You are able to visualize it in Rviz")
+                    self.marker_pub.publish(marker_in_map_frame)
+                    self.get_logger().info(f"The marker for {label} has been published to /breadcrumbs. You are able to visualize it in RViz")
 
-                # Increase the marker_id, so we dont overwrite the same marker.
-                self.marker_id += 1
-                self.face_point_in_robot_frame = None
+                    self.marker_id += 1
+                    if label == "face":
+                        self.face_point_in_robot_frame = None
+                    elif label == "ring":
+                        self.ring_point_in_robot_frame = None
+                    elif label == "cylinder":
+                        self.cylinder_point_in_robot_frame = None
+                    elif label == "parking_space":
+                        self.parking_space_point_in_robot_frame = None
 
-            except TransformException as te:
-                self.get_logger().info(f"Cound not get the transform: {te}")
+                except TransformException as te:
+                    self.get_logger().info(f"Could not get the transform for {label}: {te}")
 
-        if self.ring_point_in_robot_frame is not None:
-            time_now = rclpy.time.Time()
-            timeout = Duration(seconds=0.1)
-            try:
-                # An example of how you can get a transform from /base_link frame to the /map frame
-                # as it is at time_now, wait for timeout for it to become available
-                trans = self.tf_buffer.lookup_transform("map", "base_link", time_now, timeout)
-                self.get_logger().info(f"Looks like the transform is available.")
-
-                # Now we apply the transform to transform the point_in_robot_frame to the map frame
-                # The header in the result will be copied from the Header of the transform
-                point_in_map_frame = tfg.do_transform_point(self.ring_point_in_robot_frame, trans)
-                self.get_logger().info(f"We transformed a PointStamped!")
-
-                # If the transformation exists, create a marker from the point, in order to visualize it in Rviz
-                marker_in_map_frame = self.create_marker(point_in_map_frame, self.marker_id)
-
-                # Publish the marker
-                self.marker_pub.publish(marker_in_map_frame)
-                self.get_logger().info(f"The marker has been published to /breadcrumbs. You are able to visualize it in Rviz")
-
-                # Increase the marker_id, so we dont overwrite the same marker.
-                self.marker_id += 1
-                self.ring_point_in_robot_frame = None
-
-            except TransformException as te:
-                self.get_logger().info(f"Cound not get the transform: {te}")
-
-
-
-    def create_marker(self, point_stamped, marker_id):
-        """You can see the description of the Marker message here: https://docs.ros2.org/galactic/api/visualization_msgs/msg/Marker.html"""
+    def create_marker(self, point_stamped, marker_id, label, color):
         marker = Marker()
 
         marker.header = point_stamped.header
@@ -148,9 +124,9 @@ class TranformPoints(Node):
         marker.scale.z = scale
 
         # Set the color
-        marker.color.r = 1.0
-        marker.color.g = 0.0
-        marker.color.b = 0.0
+        marker.color.r = color[0]
+        marker.color.g = color[1]
+        marker.color.b = color[2]
         marker.color.a = 1.0
 
         # Set the pose of the marker
@@ -161,13 +137,10 @@ class TranformPoints(Node):
         return marker
 
 def main():
-
     rclpy.init(args=None)
-    
     node = TranformPoints()
     node.get_logger().info("The node has been initialized.")
     rclpy.spin(node)
-    
     rclpy.shutdown()
 
 if __name__ == '__main__':
