@@ -364,110 +364,83 @@ class RobotCommander(Node):
         except CvBridgeError as e:
             self.get_logger().error(f"Error converting image: {e}")
         return
-    
+
+
     def park(self):
         self.get_logger().info(f"ENTERED PARK FUNCTION")
+        rclpy.spin_once(self)
         while not self.camera_image.any():
             self.debug('Waiting for camera image...')
-            time.sleep(0.1) 
-        #Code from now does next:
-        #   Takes img and divides it in 4 equal parts.
-        #   Looks which part contains most black color (since parking spot is circle with black edge)
-        #   In this code I am considering that the robot is in front of box so in every iteration he moves only forward and a little to the side based on logic implemented
-        #   It publishes to the topic cmd_vel and moves robot! (not sure if it works since I cannot check)
-        #For example:
-        #   If most black is on top left corner, robot moves a little forward and little to the right (oposite of LEFT)
-        #TODO:
-        #   Put this code in while loop and make some logic for it to stop at some condition (if there is no black in img???)
-        #   To do this we should check how camera is positioned and try to figure out how the img loos like from camera view
+            time.sleep(0.1)
 
         try:
-            #we take img 
-            cv_image = self.camera_image
-            #self.camera_image = None
-            #divide it in 4 equal parts
-            height, width, _ = cv_image.shape
-            size = min(height, width)
-            cv_image = cv_image[:size, :size]
+                cv_image = self.camera_image
+                height, width, _ = cv_image.shape
+                size = min(height, width)
+                cv_image = cv_image[:size, :size]
 
-            half_size = size // 2
-            top_left = cv_image[:half_size, :half_size]
-            top_right = cv_image[:half_size, half_size:]
-            bottom_left = cv_image[half_size:, :half_size]
-            bottom_right = cv_image[half_size:, half_size:]
+                half_size = size // 2
+                top_left = cv_image[:half_size, :half_size]
+                top_right = cv_image[:half_size, half_size:]
+                bottom_left = cv_image[half_size:, :half_size]
+                bottom_right = cv_image[half_size:, half_size:]
 
-            #calculate the amount of black color in each square
-            black_pixels_top_left = np.sum(top_left < [5, 5, 5])  
-            black_pixels_top_right = np.sum(top_right < [5, 5, 5])
-            black_pixels_bottom_left = np.sum(bottom_left < [5, 5, 5])
-            black_pixels_bottom_right = np.sum(bottom_right < [5, 5, 5])
+                black_pixels_top_left = np.sum(top_left < [5, 5, 5])  
+                black_pixels_top_right = np.sum(top_right < [5, 5, 5])
+                black_pixels_bottom_left = np.sum(bottom_left < [5, 5, 5])
+                black_pixels_bottom_right = np.sum(bottom_right < [5, 5, 5])
 
-            #determine which square has the most black color
-            black_counts = [black_pixels_top_left, black_pixels_top_right, black_pixels_bottom_left, black_pixels_bottom_right]
-            most_black_square_index = np.argmax(black_counts)
+                #total_pixels = size * size
+                #black_percentage_top = (black_pixels_top_left + black_pixels_top_right) / total_pixels
+                #black_percentage_bottom = (black_pixels_bottom_left + black_pixels_bottom_right) / total_pixels
 
-            velocity_msg = Twist()
-            self.get_logger().info(f"I AM PARKING RIGH NOW!!!")
+                if (black_pixels_bottom_left + black_pixels_bottom_right > 0 or black_pixels_bottom_left + black_pixels_bottom_right == 0) and black_pixels_top_right + black_pixels_top_left == 0:  # If black is mostly on the bottom
+                    self.get_logger().info("Reached parking spot. Stopping.")
+                    return True
 
-            goal_pose = PoseStamped()
-            goal_pose.header.frame_id = 'map'
-            goal_pose.header.stamp = self.get_clock().now().to_msg()
+                velocity_msg = Twist()
+                self.get_logger().info(f"I AM PARKING RIGHT NOW!!!")
 
-            #curr_pose = self.current_pose.pose.position
-            if most_black_square_index == 0:  #top Left
-                #turn left and then move forward
-                self.get_logger().info(f"MOST BLACK ON RIGHT SIDE")
-                """goal_pose.pose.position.x = curr_pose.x + 5.0
-                goal_pose.pose.orientation = self.YawToQuaternion(0.3)
-                goal_pose.pose.position.y = curr_pose.y
-                self.goToPose(goal_pose)
-                while not self.isTaskComplete():
-                    self.info("Parking...")
-                    time.sleep(1)"""
-                velocity_msg.angular.z = 0.1  #angular speed (turn left)
-                velocity_msg.linear.x = 0.1  #forward speed
-            elif most_black_square_index == 1:  #top Right
-                #turn right and then move forward
-                self.get_logger().info(f"MOST BLACK ON LEFT SIDE")
-                """goal_pose.pose.position.x = curr_pose.x + 5.0
-                goal_pose.pose.orientation = self.YawToQuaternion(-0.3)
-                goal_pose.pose.position.y = curr_pose.y
-                self.goToPose(goal_pose)
-                while not self.isTaskComplete():
-                    self.info("Parking...")
-                    time.sleep(1)"""
-                velocity_msg.angular.z = -0.1  #angular speed (turn right)
-                velocity_msg.linear.x = 0.1  #forward speed
-            elif most_black_square_index == 2:  #bottom Left
-                #turn left and then move forward
-                self.get_logger().info(f"MOST BLACK ON RIGHT SIDE")
-                """goal_pose.pose.position.x = curr_pose.x + 5.0
-                goal_pose.pose.orientation = self.YawToQuaternion(0.3)
-                goal_pose.pose.position.y = curr_pose.y
-                self.goToPose(goal_pose)
-                while not self.isTaskComplete():
-                    self.info("Parking...")
-                    time.sleep(1)"""
-                velocity_msg.angular.z = 0.1  #angular speed (turn left)
-                velocity_msg.linear.x = 0.1  #forward speed
-            elif most_black_square_index == 3:  #bottom Right
-                #turn right and then move forward
-                self.get_logger().info(f"MOST BLACK ON LEFT SIDE")
-                """goal_pose.pose.position.x = curr_pose.x + 5.0
-                goal_pose.pose.orientation = self.YawToQuaternion(-0.3)
-                goal_pose.pose.position.y = curr_pose.y
-                self.goToPose(goal_pose)
-                while not self.isTaskComplete():
-                    self.info("Parking...")
-                    time.sleep(1)"""
-                velocity_msg.angular.z = -0.1  #angular speed (turn right)
-                velocity_msg.linear.x = 0.1 #aorward speed
+                if black_pixels_bottom_left + black_pixels_bottom_right == 0 and black_pixels_top_left == 0 and black_pixels_top_right > 0:
+                    velocity_msg.angular.z = -0.2
+                    velocity_msg.linear.x = 0.4
+                    self.get_logger().info("BLACK TOP-RIGHT")
+                    time.sleep(1.5)
+                elif black_pixels_bottom_left + black_pixels_bottom_right == 0 and black_pixels_top_right == 0 and black_pixels_top_left > 0:
+                    velocity_msg.angular.z = 0.2
+                    velocity_msg.linear.x = 0.4    
+                    self.get_logger().info("BLACK TOP-LEFT")
+                    time.sleep(1.5)
+                #elif black_pixels_top_left + black_pixels_top_right > 0 and black_pixels_bottom_left + black_pixels_bottom_right == 0:  # If black is mostly on top
+                #    velocity_msg.linear.x = 0.4   
+                #    time.sleep(1.5)  
+                else:
+                    most_black_square_index = np.argmax([black_pixels_top_left, black_pixels_top_right, black_pixels_bottom_left, black_pixels_bottom_right])
+                    if most_black_square_index == 0:  
+                        velocity_msg.angular.z = -0.1 
+                        velocity_msg.linear.x = 0.1 
+                        self.get_logger().info("MOVING INSIDE CIRCLE") 
+                        time.sleep(1.5)
+                    elif most_black_square_index == 1:  
+                        velocity_msg.angular.z = 0.1  
+                        velocity_msg.linear.x = 0.1 
+                        self.get_logger().info("MOVING INSIDE CIRCLE") 
+                        time.sleep(1.5) 
+                    elif most_black_square_index == 2:  
+                        velocity_msg.angular.z = -0.1 
+                        velocity_msg.linear.x = 0.1  
+                        self.get_logger().info("MOVING INSIDE CIRCLE") 
+                        time.sleep(1.5)
+                    elif most_black_square_index == 3:  
+                        velocity_msg.angular.z = 0.1  
+                        velocity_msg.linear.x = 0.1  
+                        self.get_logger().info("MOVING INSIDE CIRCLE") 
+                        time.sleep(1.5)
 
-            #publish the velocity command
-            self.get_logger().info(f"{velocity_msg}")
-            
-            self.vel_pub.publish(velocity_msg)
-            self.debug('Parking the robot...')
+                self.vel_pub.publish(velocity_msg)
+                self.debug('Parking the robot...')
+                time.sleep(0.1)  
+                return False
         except CvBridgeError as e:
             self.get_logger().error(f"Error converting image: {e}")
 
@@ -520,11 +493,17 @@ def main(args=None):
              time.sleep(1)"""
 
 
-    for _ in range(5):
-        rclpy.spin_once(rc)
-        rc.park()
-        time.sleep(1.5)
-        #rclpy.spin_once(rc)
+    
+    try:
+        while rclpy.ok():
+            rc.park()  
+            rclpy.spin_once(rc)  
+            time.sleep(0.1)  
+    except KeyboardInterrupt:
+        pass
+
+    while not rc.park():
+        continue
 
     # TASK 1                    RETURN TO NORMAL WHEN FINISHED
     # marked_poses = []
