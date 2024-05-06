@@ -78,6 +78,9 @@ class RobotCommander(Node):
         self.initial_pose_received = False
         self.is_docked = None
         self.camera_image = None
+        self.processing_position = False
+        self.parked = False
+        self.img_updated = False
 
         self.bridge = CvBridge()
 
@@ -113,7 +116,7 @@ class RobotCommander(Node):
                                                       qos_profile)
 
         self.vel_pub = self.create_publisher(Twist,
-                                             '/cmd_vel_nav', 
+                                             '/cmd_vel_nav',
                                              10)
 
         # ROS2 Action clients
@@ -357,9 +360,9 @@ class RobotCommander(Node):
     def camera_callback(self, msg):
         try:
             #this line should convert img to cv-format but it it not working :(
-            #Maybe I have to install cv_bridge lib but i cannot cause i am not sudo 
+            #Maybe I have to install cv_bridge lib but i cannot cause i am not sudo
             #So i am not sure how this works (cannot check)
-            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8") 
+            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
             self.camera_image = cv_image
         except CvBridgeError as e:
             self.get_logger().error(f"Error converting image: {e}")
@@ -367,82 +370,202 @@ class RobotCommander(Node):
 
 
     def park(self):
-        self.get_logger().info(f"ENTERED PARK FUNCTION")
+        self.get_logger().info("PARKINGGGGGGGGGGGGGGGG")
         rclpy.spin_once(self)
         while not self.camera_image.any():
             self.debug('Waiting for camera image...')
             time.sleep(0.1)
 
         try:
-                cv_image = self.camera_image
-                height, width, _ = cv_image.shape
+            cv_image = self.camera_image
+            height, width, _ = cv_image.shape
+            size = min(height, width)
+            #cv_image = cv_image[:size, :size]
+
+            half_size = size // 2
+            top_left = cv_image[:half_size, :half_size]
+            top_right = cv_image[:half_size, half_size:]
+            bottom_left = cv_image[half_size:, :half_size]
+            bottom_right = cv_image[half_size:, half_size:]
+
+            black_pixels_top_left = np.sum(top_left < [5, 5, 5])
+            black_pixels_top_right = np.sum(top_right < [5, 5, 5])
+            black_pixels_bottom_left = np.sum(bottom_left < [5, 5, 5])
+            black_pixels_bottom_right = np.sum(bottom_right < [5, 5, 5])
+
+            #total_pixels = size * size
+            #black_percentage_top = (black_pixels_top_left + black_pixels_top_right) / total_pixels
+            #black_percentage_bottom = (black_pixels_bottom_left + black_pixels_bottom_right) / total_pixels
+
+            if (black_pixels_bottom_left + black_pixels_bottom_right == 0 or black_pixels_bottom_left + black_pixels_bottom_right <6000) and black_pixels_top_right + black_pixels_top_left == 0:  # If black is mostly on the bottom
+                self.get_logger().info("Reached parking spot. Stopping.")
+                self.get_logger().info(f"NUM OF PIXELS: {black_pixels_bottom_right + black_pixels_bottom_left}")
+                self.parked = True
+                # rclpy.spin_once(self)
+                while not self.camera_image.any():
+                    self.debug('Waiting for camera image...')
+                    time.sleep(0.1)
+                return
+
+
+            velocity_msg_processing = Twist()
+            if (black_pixels_bottom_left > 0 and black_pixels_top_left > 0) and black_pixels_bottom_right + black_pixels_top_right == 0:
+                self.get_logger().info("PROCESSING WHERE AM I. LEFT SIDE")
+                pixel_sum = black_pixels_bottom_left + black_pixels_top_left
+                velocity_msg_processing.angular.z = -0.7
+                self.vel_pub.publish(velocity_msg_processing)
+                self.get_logger().info("TURNED LEFT")
+                rclpy.spin_once(self)
+                while not self.camera_image.any():
+                    self.debug('Waiting for camera image...')
+                    time.sleep(0.1)
+                time.sleep(1.5)
+                #i m not sure if this is OK?
+                cv_image_new = self.camera_image
+                height, width, _ = cv_image_new.shape
                 size = min(height, width)
-                cv_image = cv_image[:size, :size]
+                #cv_image_new = cv_image_new[:size, :size]
 
                 half_size = size // 2
-                top_left = cv_image[:half_size, :half_size]
-                top_right = cv_image[:half_size, half_size:]
-                bottom_left = cv_image[half_size:, :half_size]
-                bottom_right = cv_image[half_size:, half_size:]
+                top_left_new = cv_image_new[:half_size, :half_size]
+                top_right_new = cv_image_new[:half_size, half_size:]
+                bottom_left_new = cv_image_new[half_size:, :half_size]
+                bottom_right_new = cv_image_new[half_size:, half_size:]
 
-                black_pixels_top_left = np.sum(top_left < [5, 5, 5])  
-                black_pixels_top_right = np.sum(top_right < [5, 5, 5])
-                black_pixels_bottom_left = np.sum(bottom_left < [5, 5, 5])
-                black_pixels_bottom_right = np.sum(bottom_right < [5, 5, 5])
+                black_pixels_top_left_new = np.sum(top_left_new < [5, 5, 5])
+                black_pixels_top_right_new = np.sum(top_right_new < [5, 5, 5])
+                black_pixels_bottom_left_new = np.sum(bottom_left_new < [5, 5, 5])
+                black_pixels_bottom_right_new = np.sum(bottom_right_new < [5, 5, 5])
 
-                #total_pixels = size * size
-                #black_percentage_top = (black_pixels_top_left + black_pixels_top_right) / total_pixels
-                #black_percentage_bottom = (black_pixels_bottom_left + black_pixels_bottom_right) / total_pixels
+                if pixel_sum +20> black_pixels_bottom_left_new + black_pixels_top_left_new + black_pixels_top_right_new + black_pixels_bottom_right_new:
+                    self.get_logger().info("CHANGING DIRECTION. SEEMS 1ST ONE WAS WRONG!")
+                    velocity_msg_processing.angular.z = 1.8
+                    self.vel_pub.publish(velocity_msg_processing)
+                    self.get_logger().info("TURNED RIGHT")
+                    self.processing_position = False
+                self.processing_position = False
 
-                if (black_pixels_bottom_left + black_pixels_bottom_right > 0 or black_pixels_bottom_left + black_pixels_bottom_right == 0) and black_pixels_top_right + black_pixels_top_left == 0:  # If black is mostly on the bottom
-                    self.get_logger().info("Reached parking spot. Stopping.")
-                    return True
+            if (black_pixels_bottom_right > 0 and black_pixels_top_right > 0) and black_pixels_bottom_left + black_pixels_top_left == 0:
+                self.get_logger().info("PROCESSING WHERE AM I. RIGHT SIDE")
+                pixel_sum = black_pixels_bottom_right + black_pixels_top_right
+                velocity_msg_processing.angular.z = 0.7
+                self.vel_pub.publish(velocity_msg_processing)
+                self.get_logger().info("TURNED RIGHT")
+                rclpy.spin_once(self)
+                while not self.camera_image.any():
+                    self.debug('Waiting for camera image...')
+                    time.sleep(0.1)
+                time.sleep(1.5)
+                #i m not sure if this is OK?
+                cv_image_new = self.camera_image
+                height, width, _ = cv_image_new.shape
+                size = min(height, width)
+                #cv_image_new = cv_image_new[:size, :size]
 
-                velocity_msg = Twist()
-                self.get_logger().info(f"I AM PARKING RIGHT NOW!!!")
+                half_size = size // 2
+                top_left_new = cv_image_new[:half_size, :half_size]
+                top_right_new = cv_image_new[:half_size, half_size:]
+                bottom_left_new = cv_image_new[half_size:, :half_size]
+                bottom_right_new = cv_image_new[half_size:, half_size:]
 
-                if black_pixels_bottom_left + black_pixels_bottom_right == 0 and black_pixels_top_left == 0 and black_pixels_top_right > 0:
-                    velocity_msg.angular.z = -0.2
-                    velocity_msg.linear.x = 0.4
-                    self.get_logger().info("BLACK TOP-RIGHT")
-                    time.sleep(1.5)
-                elif black_pixels_bottom_left + black_pixels_bottom_right == 0 and black_pixels_top_right == 0 and black_pixels_top_left > 0:
-                    velocity_msg.angular.z = 0.2
-                    velocity_msg.linear.x = 0.4    
-                    self.get_logger().info("BLACK TOP-LEFT")
-                    time.sleep(1.5)
-                #elif black_pixels_top_left + black_pixels_top_right > 0 and black_pixels_bottom_left + black_pixels_bottom_right == 0:  # If black is mostly on top
-                #    velocity_msg.linear.x = 0.4   
-                #    time.sleep(1.5)  
-                else:
-                    most_black_square_index = np.argmax([black_pixels_top_left, black_pixels_top_right, black_pixels_bottom_left, black_pixels_bottom_right])
-                    if most_black_square_index == 0:  
-                        velocity_msg.angular.z = -0.1 
-                        velocity_msg.linear.x = 0.1 
-                        self.get_logger().info("MOVING INSIDE CIRCLE") 
-                        time.sleep(1.5)
-                    elif most_black_square_index == 1:  
-                        velocity_msg.angular.z = 0.1  
-                        velocity_msg.linear.x = 0.1 
-                        self.get_logger().info("MOVING INSIDE CIRCLE") 
-                        time.sleep(1.5) 
-                    elif most_black_square_index == 2:  
-                        velocity_msg.angular.z = -0.1 
-                        velocity_msg.linear.x = 0.1  
-                        self.get_logger().info("MOVING INSIDE CIRCLE") 
-                        time.sleep(1.5)
-                    elif most_black_square_index == 3:  
-                        velocity_msg.angular.z = 0.1  
-                        velocity_msg.linear.x = 0.1  
-                        self.get_logger().info("MOVING INSIDE CIRCLE") 
-                        time.sleep(1.5)
+                black_pixels_top_left_new = np.sum(top_left_new < [5, 5, 5])
+                black_pixels_top_right_new = np.sum(top_right_new < [5, 5, 5])
+                black_pixels_bottom_left_new = np.sum(bottom_left_new < [5, 5, 5])
+                black_pixels_bottom_right_new = np.sum(bottom_right_new < [5, 5, 5])
 
+                if pixel_sum +20> black_pixels_bottom_left_new + black_pixels_top_left_new + black_pixels_top_right_new + black_pixels_bottom_right_new:
+                    self.get_logger().info("CHANGING DIRECTION. SEEMS 1ST ONE WAS WRONG!")
+                    velocity_msg_processing.angular.z = -1.8
+                    self.vel_pub.publish(velocity_msg_processing)
+                    self.get_logger().info("TURNED LEFT")
+                    self.processing_position = False
+                self.processing_position = False
+
+
+
+            velocity_msg = Twist()
+
+            if black_pixels_bottom_left + black_pixels_bottom_right == 0 and black_pixels_top_left == 0 and black_pixels_top_right > 0:
+                velocity_msg.angular.z = -0.4
+                velocity_msg.linear.x = 0.4
+                self.get_logger().info("BLACK TOP-RIGHT")
                 self.vel_pub.publish(velocity_msg)
                 self.debug('Parking the robot...')
-                time.sleep(0.1)  
-                return False
+                time.sleep(0.1)
+                time.sleep(1.5)
+                rclpy.spin_once(self)
+                while not self.camera_image.any():
+                    self.debug('Waiting for camera image...')
+                    time.sleep(0.1)
+                return
+            elif black_pixels_bottom_left + black_pixels_bottom_right == 0 and black_pixels_top_right == 0 and black_pixels_top_left > 0:
+                velocity_msg.angular.z = 0.4
+                velocity_msg.linear.x = 0.4
+                self.get_logger().info("BLACK TOP-LEFT")
+                self.vel_pub.publish(velocity_msg)
+                self.debug('Parking the robot...')
+                time.sleep(0.1)
+                time.sleep(1.5)
+                rclpy.spin_once(self)
+                while not self.camera_image.any():
+                    self.debug('Waiting for camera image...')
+                    time.sleep(0.1)
+                return
+            #elif black_pixels_top_left + black_pixels_top_right > 0 and black_pixels_bottom_left + black_pixels_bottom_right == 0:  # If black is mostly on top
+            #    velocity_msg.linear.x = 0.4
+            #    time.sleep(1.5)
+            else:
+                most_black_square_index = np.argmax([black_pixels_top_left, black_pixels_top_right, black_pixels_bottom_left, black_pixels_bottom_right])
+                if most_black_square_index == 0:
+                    velocity_msg.angular.z = -0.1
+                    velocity_msg.linear.x = 0.1
+                    self.get_logger().info("MOVING INSIDE CIRCLE")
+                    time.sleep(1.5)
+                elif most_black_square_index == 1:
+                    velocity_msg.angular.z = 0.1
+                    velocity_msg.linear.x = 0.1
+                    self.get_logger().info("MOVING INSIDE CIRCLE")
+                    time.sleep(1.5)
+                elif most_black_square_index == 2:
+                    velocity_msg.angular.z = -0.1
+                    velocity_msg.linear.x = 0.1
+                    self.get_logger().info("MOVING INSIDE CIRCLE")
+                    time.sleep(1.5)
+                elif most_black_square_index == 3:
+                    velocity_msg.angular.z = 0.1
+                    velocity_msg.linear.x = 0.1
+                    self.get_logger().info("MOVING INSIDE CIRCLE")
+                    time.sleep(1.5)
+            if not self.parked:
+                self.vel_pub.publish(velocity_msg)
+                self.debug('Parking the robot...')
+                time.sleep(0.1)
+                rclpy.spin_once(self)
+                return
         except CvBridgeError as e:
             self.get_logger().error(f"Error converting image: {e}")
+
+    def final_check_left(self):
+        rclpy.spin_once(self)
+        vel_msg = Twist()
+        vel_msg.angular.z = -4.5
+        self.vel_pub.publish(vel_msg)
+        time.sleep(4.0)
+        rclpy.spin_once(self)
+        self.get_logger().info(f"FINL CHECK LEFT")
+        self.park()
+        #rclpy.spin_once(self)
+
+    def final_check_right(self):
+        rclpy.spin_once(self)
+        vel_msg = Twist()
+        vel_msg.angular.z = -4.0
+        self.vel_pub.publish(vel_msg)
+        time.sleep(4.0)
+        rclpy.spin_once(self)
+        self.get_logger().info(f"FINL CHECK RIGHT")
+        self.park()
+        #rclpy.spin_once(self)
 
 def main(args=None):
 
@@ -477,7 +600,7 @@ def main(args=None):
     # [1.5,-0.4,-0.069] --> 10
     # [2.23,-1.78,-1] --> 11
     # [0.63,-0.76,0.458],[1.5,-0.4,-0.069]   9 and 10 possitions!!!
-    
+
     #
     """point = [-1.07,1.27,1.7]
     goal_pose = PoseStamped()
@@ -493,17 +616,63 @@ def main(args=None):
              time.sleep(1)"""
 
 
-    
-    try:
-        while rclpy.ok():
-            rc.park()  
-            rclpy.spin_once(rc)  
-            time.sleep(0.1)  
-    except KeyboardInterrupt:
-        pass
 
-    while not rc.park():
-        continue
+    """try:
+        while rclpy.ok():
+            rc.park()
+            rclpy.spin_once(rc)
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        pass"""
+
+    while not rc.parked:
+        rc.park()
+        if rc.parked:
+            break
+        rclpy.spin_once(rc)
+
+    rc.parked = False
+    rc.final_check_left()
+    while not rc.isTaskComplete():
+        rc.info("Waiting for the task to complete...")
+        rclpy.spin_once(rc)
+        time.sleep(1)
+    time.sleep(4.0)    
+    rclpy.spin_once(rc)
+    #rc.park()
+    rc.parked = False
+    rclpy.spin_once(rc)
+    rc.final_check_right()
+    while not rc.isTaskComplete():
+        rc.info("Waiting for the task to complete...")
+        rclpy.spin_once(rc)
+        time.sleep(1)
+    time.sleep(4.0)    
+    rclpy.spin_once(rc)
+    rc.parked = False
+    rc.final_check_left()
+    while not rc.isTaskComplete():
+        rc.info("Waiting for the task to complete...")
+        rclpy.spin_once(rc)
+        time.sleep(1)
+    time.sleep(4.0)
+    rclpy.spin_once(rc)
+    rc.parked = False
+    rc.final_check_left()
+    while not rc.isTaskComplete():
+        rc.info("Waiting for the task to complete...")
+        rclpy.spin_once(rc)
+        time.sleep(1)
+    time.sleep(4.0)    
+    rclpy.spin_once(rc)
+    rc.parked = False
+    rc.final_check_left()
+    while not rc.isTaskComplete():
+        rc.info("Waiting for the task to complete...")
+        rclpy.spin_once(rc)
+        time.sleep(1)
+    rclpy.spin_once(rc)
+    
 
     # TASK 1                    RETURN TO NORMAL WHEN FINISHED
     # marked_poses = []
