@@ -94,10 +94,11 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     seg.setModelType(pcl::SACMODEL_NORMAL_PLANE);
     seg.setNormalDistanceWeight(0.1);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setMaxIterations(100);
-    seg.setDistanceThreshold(0.03);
+    seg.setMaxIterations(200);
+    seg.setDistanceThreshold(0.02);
     seg.setInputCloud(cloud_filtered);
     seg.setInputNormals(cloud_normals);
+    seg.setRadiusLimits(0.05, 0.15); // Adjust based on the expected cylinder size
 
     seg.segment(*inliers_plane, *coefficients_plane);
     if (verbose) {
@@ -124,9 +125,9 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     seg.setModelType(pcl::SACMODEL_CYLINDER);
     seg.setMethodType(pcl::SAC_RANSAC);
     seg.setNormalDistanceWeight(0.1);
-    seg.setMaxIterations(100);
+    seg.setMaxIterations(200);
     seg.setDistanceThreshold(0.05);
-    seg.setRadiusLimits(0.06, 0.2);
+    //seg.setRadiusLimits(0.2, 0.3);
     seg.setInputCloud(cloud_filtered2);
     seg.setInputNormals(cloud_normals2);
 
@@ -218,7 +219,7 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     marker.color.a = 1.0f;
 
     // marker.lifetime = rclcpp::Duration(1,0);
-    marker.lifetime = rclcpp::Duration(10, 0);
+    marker.lifetime = rclcpp::Duration(0, 0);
 
     marker_pub->publish(marker);
 
