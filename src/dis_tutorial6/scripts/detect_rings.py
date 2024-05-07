@@ -38,10 +38,14 @@ class RingDetector(Node):
         # Subscribe to the image and/or depth topic
         self.image_sub = self.create_subscription(Image, "/oakd/rgb/preview/image_raw", self.image_callback, 1)
         self.depth_sub = self.create_subscription(Image, "/oakd/rgb/preview/depth", self.depth_callback, 1)
+        # self.marker_pub = self.create_publisher(Marker, marker_topic, QoSReliabilityPolicy.BEST_EFFORT)
+
         #self.segmented_cloud_sub = self.create_subscription(PointCloud2, "/segmented_cloud", self.segmented_cloud_callback, 1)
 
         # Publiser for the visualization markers
-        self.ring_pub = self.create_publisher(PointStamped, "/ring", qos_profile)
+        self.ring_pub = self.create_publisher(Marker, "/breadcrumbs", QoSReliabilityPolicy.BEST_EFFORT)
+        self.ring_pub_point = self.create_publisher(PointStamped, "/ring", qos_profile)
+        
 
         # Object we use for transforming between coordinate frames
         # self.tf_buf = tf2_ros.Buffer()
@@ -87,9 +91,9 @@ class RingDetector(Node):
         contours, hierarchy = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
         # Example of how to draw the contours, only for visualization purposes
-        cv2.drawContours(gray, contours, -1, (255, 0, 0), 3)
-        cv2.imshow("Detected contours", gray)
-        cv2.waitKey(1)
+        # cv2.drawContours(gray, contours, -1, (255, 0, 0), 3)
+        # cv2.imshow("Detected contours", gray)
+        # cv2.waitKey(1)
 
         # Fit ellipses to contours and check aspect ratio, circularity, and radius consistency
         elps = []
@@ -97,24 +101,7 @@ class RingDetector(Node):
             if cnt.shape[0] >= 20:
                 ellipse = cv2.fitEllipse(cnt)
                 elps.append(ellipse)
-            # if cnt.shape[0] >= 20:
-            #     ellipse = cv2.fitEllipse(cnt)
-            #     # Calculate aspect ratio
-            #     aspect_ratio = ellipse[1][0] / ellipse[1][1]
-            #     # Set thresholds for aspect ratio, circularity, and radius consistency
-            #     aspect_ratio_threshold = 1.5
-            #     circularity_threshold = 0.8
-            #     min_radius = 10
-            #     max_radius = 200
-            #     # Check aspect ratio, circularity, and radius consistency
-            #     if (abs(aspect_ratio - 1.0) > aspect_ratio_threshold or
-            #         ellipse[1][0] == 0 or ellipse[1][1] == 0 or
-            #         cv2.contourArea(cnt) / (np.pi * (ellipse[1][0] / 2) * (ellipse[1][1] / 2)) < circularity_threshold or
-            #         ellipse[1][0] < min_radius or ellipse[1][0] > max_radius or
-            #         ellipse[1][1] < min_radius or ellipse[1][1] > max_radius):
-            #         continue
-            #     elps.append(ellipse)
-
+            
 
         # Find two elipses with same centers
         candidates = []
@@ -180,6 +167,10 @@ class RingDetector(Node):
                 color = self.detect_ring_color(cv_image, (e2[0][0], e2[0][1]), e2[1][0], e2[1][1])
                 self.get_logger().info(f"e2 color {color}")
 
+
+                ## --------------------------------------------------------------
+                ## At this point we have a correct ring detected and the color of it. Need to mark this on the map.
+
                     
                 candidates.append((e1,e2))
 
@@ -221,15 +212,42 @@ class RingDetector(Node):
             point = PointStamped()
 
             # Set the frame ID to the frame of the image
-            point.header.frame_id = data.header.frame_id
+            point.header.frame_id = "/base_link"
 
             # Set the point to the average center of the detected rings
-            point.point.x = average_center[0]
-            point.point.y = average_center[1]
+            point.point.x = center[0]
+            point.point.y = center[1]
             point.point.z = 0.0  # Assuming the ring is in the plane of the image
 
             # Publish the point
-            self.ring_pub.publish(point)
+            self.ring_pub_point.publish(point)
+
+
+            marker = Marker()
+
+            marker.header.frame_id = "/map"
+            marker.header.stamp = data.header.stamp
+
+            marker.type = 2
+            marker.id = 0
+
+            # Set the scale of the marker
+            scale = 0.1
+            marker.scale.x = scale
+            marker.scale.y = scale
+            marker.scale.z = scale
+
+            # Set the color
+            marker.color.r = 1.0
+            marker.color.g = 0.0
+            marker.color.b = 0.0
+            marker.color.a = 1.0
+
+            # Set the pose of the marker
+            marker.pose.position.x = average_center[0]
+            marker.pose.position.y = average_center[1]
+            marker.pose.position.z = 0.0
+            self.ring_pub.publish(marker)
 
         if len(candidates)>0:
                 cv2.imshow("Detected rings",cv_image)
@@ -286,20 +304,6 @@ class RingDetector(Node):
 
 
     def detect_ring_color(self, cv_image, center, x_axis_length, y_axis_length):
-        # Check if contour is not None and is iterable
-        # height, width, _ = cv_image.shape
-        # size = min(height, width)
-        # cv_image = cv_image[:size, :size]
-        # half_size = size // 2
-        # top_left = cv_image[:half_size, :half_size]
-        # top_right = cv_image[:half_size, half_size:]
-        # bottom_left = cv_image[half_size:, :half_size]
-        # bottom_right = cv_image[half_size:, half_size:]
-        # black_pixels_top_left = np.sum(top_left < [5, 5, 5])
-        # black_pixels_top_right = np.sum(top_right < [5, 5, 5])
-        # black_pixels_bottom_left = np.sum(bottom_left < [5, 5, 5])
-        # black_pixels_bottom_right = np.sum(bottom_right < [5, 5, 5])
-         # Extract the coordinates of the rectangle based on the center and axis lengths
         x_center, y_center = center
         half_x_length = x_axis_length // 2
         half_y_length = y_axis_length // 2
@@ -311,23 +315,48 @@ class RingDetector(Node):
         # Extract the region of interest (ROI) from the image
         roi = cv_image[y_min:y_max, x_min:x_max]
         # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
-        cv2.imshow("Non Depth verified rings",roi)
+        cv2.imshow("cropped image",roi)
+
+        gray_threshold = 1
+        gray_color = [178, 178, 178]
+        roi_filtered = roi[~np.all(np.abs(roi - gray_color) <= gray_threshold, axis=-1)]
+
+       
+        # Convert the filtered ROI to HSV color space
+        # Ensure that roi_filtered has 3 channels (RGB/BGR image)
+        if len(roi_filtered.shape) == 2:
+            roi_filtered = cv2.cvtColor(roi_filtered, cv2.COLOR_GRAY2BGR)
+
+        # Convert the filtered ROI to HSV color space
+        hsv_roi = cv2.cvtColor(roi_filtered, cv2.COLOR_BGR2HSV)
+
 
         # Count the number of pixels for each color
-        blue_pixels = np.sum(roi[:,:,0] > 200)  # Assuming blue color has high blue channel intensity
-        green_pixels = np.sum(roi[:,:,1] > 200)  # Assuming green color has high green channel intensity
-        red_pixels = np.sum(roi[:,:,2] > 200)  # Assuming red color has high red channel intensity
+        blue_pixels = np.sum(hsv_roi[:,:,0] > 170)  # Assuming blue color has high blue channel intensity
+        green_pixels = np.sum(hsv_roi[:,:,1] > 170)  # Assuming green color has high green channel intensity
+        red_pixels = np.sum(hsv_roi[:,:,2] > 185)  # Assuming red color has high red channel intensity
+
+        self.get_logger().info(f"blue px {blue_pixels}")
+        self.get_logger().info(f"green px {green_pixels}")
+        self.get_logger().info(f"red px  {red_pixels}")
+
+        if red_pixels > 100:
+            return "red"
+        elif red_pixels != 0:
+            return "green"
+        
+        return "blue"
 
         # Determine the color with the most pixels
         max_pixels_color = max(blue_pixels, green_pixels, red_pixels)
 
-        # Return the color with the most pixels
-        if max_pixels_color == blue_pixels:
-            return "blue"
-        elif max_pixels_color == green_pixels:
-            return "green"
-        else:
-            return "red"
+        # # Return the color with the most pixels
+        # if max_pixels_color == blue_pixels:
+        #     return "blue"
+        # elif max_pixels_color == green_pixels:
+        #     return "green"
+        # else:
+        #     return "red"
 
 
     def depth_callback(self,data):
