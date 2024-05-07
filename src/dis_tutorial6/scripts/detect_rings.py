@@ -96,21 +96,24 @@ class RingDetector(Node):
         for cnt in contours:
             if cnt.shape[0] >= 20:
                 ellipse = cv2.fitEllipse(cnt)
-                # Calculate aspect ratio
-                aspect_ratio = ellipse[1][0] / ellipse[1][1]
-                # Set thresholds for aspect ratio, circularity, and radius consistency
-                aspect_ratio_threshold = 1.5
-                circularity_threshold = 0.8
-                min_radius = 10
-                max_radius = 200
-                # Check aspect ratio, circularity, and radius consistency
-                if (abs(aspect_ratio - 1.0) > aspect_ratio_threshold or
-                    ellipse[1][0] == 0 or ellipse[1][1] == 0 or
-                    cv2.contourArea(cnt) / (np.pi * (ellipse[1][0] / 2) * (ellipse[1][1] / 2)) < circularity_threshold or
-                    ellipse[1][0] < min_radius or ellipse[1][0] > max_radius or
-                    ellipse[1][1] < min_radius or ellipse[1][1] > max_radius):
-                    continue
                 elps.append(ellipse)
+            # if cnt.shape[0] >= 20:
+            #     ellipse = cv2.fitEllipse(cnt)
+            #     # Calculate aspect ratio
+            #     aspect_ratio = ellipse[1][0] / ellipse[1][1]
+            #     # Set thresholds for aspect ratio, circularity, and radius consistency
+            #     aspect_ratio_threshold = 1.5
+            #     circularity_threshold = 0.8
+            #     min_radius = 10
+            #     max_radius = 200
+            #     # Check aspect ratio, circularity, and radius consistency
+            #     if (abs(aspect_ratio - 1.0) > aspect_ratio_threshold or
+            #         ellipse[1][0] == 0 or ellipse[1][1] == 0 or
+            #         cv2.contourArea(cnt) / (np.pi * (ellipse[1][0] / 2) * (ellipse[1][1] / 2)) < circularity_threshold or
+            #         ellipse[1][0] < min_radius or ellipse[1][0] > max_radius or
+            #         ellipse[1][1] < min_radius or ellipse[1][1] > max_radius):
+            #         continue
+            #     elps.append(ellipse)
 
 
         # Find two elipses with same centers
@@ -124,23 +127,32 @@ class RingDetector(Node):
                 dist = np.sqrt(((e1[0][0] - e2[0][0]) ** 2 + (e1[0][1] - e2[0][1]) ** 2))
                 angle_diff = np.abs(e1[2] - e2[2])
 
+                # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
+                # cv2.imshow("All fitted ellipeses",cv_image)    
+
                 # this check seems weird but it works for distinguising rings on the ground vs high up (the ones we want)
                 if e1[0][1] > 80 or e2[0][1] > 80:
                     continue
 
-                cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
-                cv2.imshow("Non Depth verified rings",cv_image)    
+                # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
+                # cv2.imshow("All higher ellipses",cv_image)    
 
                 # The centers of the two elipses should be within 5 pixels of each other (is there a better treshold?)
-                if dist >= 5:
+                if dist >= 25:
                     continue
+
+                # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
+                # cv2.imshow("All higher with small distance ellipses",cv_image)
 
                 # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
                 # cv2.imshow("Non Depth verified rings",cv_image)
 
                 # The rotation of the elipses should be whitin 4 degrees of eachother
-                if angle_diff>4:
+                if angle_diff>15:
                     continue
+
+                # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
+                # cv2.imshow("All lower diff ells",cv_image)
 
                 e1_minor_axis = e1[1][0]
                 e1_major_axis = e1[1][1]
@@ -158,10 +170,15 @@ class RingDetector(Node):
                     continue # if one ellipse does not contain the other, it is not a ring
                 
                 
+                
                 # Verify detection with depth sensors to avoid cubes, 2d rings on the wall
                 if self.detect_depth_ring(depth_info_local, e1[0][0], e1[0][1], cv_image) is not True:
                     continue
-                # ------------------
+              
+                color = self.detect_ring_color(cv_image, (e1[0][0], e1[0][1]), e1[1][0], e1[1][1])
+                self.get_logger().info(f"e1 color {color}")
+                color = self.detect_ring_color(cv_image, (e2[0][0], e2[0][1]), e2[1][0], e2[1][1])
+                self.get_logger().info(f"e2 color {color}")
 
                     
                 candidates.append((e1,e2))
@@ -246,9 +263,9 @@ class RingDetector(Node):
                 continue
 
             # Draw the circle on the image for visualization
-            cv2.circle(cv_image, (int(x), int(y)), int(radius), (0, 0, 255))
-            # cv2.circle(cv_image, (int(x),int(y)), int(radius), (0, 0, 255))
-            cv2.imshow("Depth Detected rings",cv_image)
+            # cv2.circle(cv_image, (int(x), int(y)), int(radius), (0, 0, 255))
+            # # cv2.circle(cv_image, (int(x),int(y)), int(radius), (0, 0, 255))
+            # cv2.imshow("Depth Detected rings",cv_image)
 
             area = cv2.contourArea(contour)
 
@@ -268,8 +285,49 @@ class RingDetector(Node):
         return False  # No ring detected
 
 
-    
+    def detect_ring_color(self, cv_image, center, x_axis_length, y_axis_length):
+        # Check if contour is not None and is iterable
+        # height, width, _ = cv_image.shape
+        # size = min(height, width)
+        # cv_image = cv_image[:size, :size]
+        # half_size = size // 2
+        # top_left = cv_image[:half_size, :half_size]
+        # top_right = cv_image[:half_size, half_size:]
+        # bottom_left = cv_image[half_size:, :half_size]
+        # bottom_right = cv_image[half_size:, half_size:]
+        # black_pixels_top_left = np.sum(top_left < [5, 5, 5])
+        # black_pixels_top_right = np.sum(top_right < [5, 5, 5])
+        # black_pixels_bottom_left = np.sum(bottom_left < [5, 5, 5])
+        # black_pixels_bottom_right = np.sum(bottom_right < [5, 5, 5])
+         # Extract the coordinates of the rectangle based on the center and axis lengths
+        x_center, y_center = center
+        half_x_length = x_axis_length // 2
+        half_y_length = y_axis_length // 2
+        x_min = int(max(0, x_center - half_x_length))
+        x_max = int(min(cv_image.shape[1], x_center + half_x_length))
+        y_min = int(max(0, y_center - half_y_length))
+        y_max = int(min(cv_image.shape[0], y_center + half_y_length))
 
+        # Extract the region of interest (ROI) from the image
+        roi = cv_image[y_min:y_max, x_min:x_max]
+        # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
+        cv2.imshow("Non Depth verified rings",roi)
+
+        # Count the number of pixels for each color
+        blue_pixels = np.sum(roi[:,:,0] > 200)  # Assuming blue color has high blue channel intensity
+        green_pixels = np.sum(roi[:,:,1] > 200)  # Assuming green color has high green channel intensity
+        red_pixels = np.sum(roi[:,:,2] > 200)  # Assuming red color has high red channel intensity
+
+        # Determine the color with the most pixels
+        max_pixels_color = max(blue_pixels, green_pixels, red_pixels)
+
+        # Return the color with the most pixels
+        if max_pixels_color == blue_pixels:
+            return "blue"
+        elif max_pixels_color == green_pixels:
+            return "green"
+        else:
+            return "red"
 
 
     def depth_callback(self,data):
@@ -299,6 +357,8 @@ class RingDetector(Node):
 
         cv2.imshow("Depth window", image_viz)
         cv2.waitKey(1)
+
+
 
 
 def main():
