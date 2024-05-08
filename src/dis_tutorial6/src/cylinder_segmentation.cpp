@@ -34,7 +34,7 @@ typedef pcl::PointXYZ PointT;
 int marker_id = 0;
 float error_margin = 0.02;  // 2 cm margin for error
 float target_radius = 0.11;
-bool verbose = false;
+bool verbose = true;
 
 // set up PCL RANSAC objects
 
@@ -94,8 +94,8 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     seg.setModelType(pcl::SACMODEL_NORMAL_PLANE);
     seg.setNormalDistanceWeight(0.1);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setMaxIterations(100);
-    seg.setDistanceThreshold(0.03);
+    seg.setMaxIterations(1000);
+    seg.setDistanceThreshold(0.1);
     seg.setInputCloud(cloud_filtered);
     seg.setInputNormals(cloud_normals);
 
@@ -123,10 +123,10 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     seg.setOptimizeCoefficients(true);
     seg.setModelType(pcl::SACMODEL_CYLINDER);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setNormalDistanceWeight(0.1);
-    seg.setMaxIterations(100);
-    seg.setDistanceThreshold(0.05);
-    seg.setRadiusLimits(0.06, 0.2);
+    seg.setNormalDistanceWeight(0.05);
+    seg.setMaxIterations(1000);
+    seg.setDistanceThreshold(0.1);
+    seg.setRadiusLimits(0.1, 1.0);
     seg.setInputCloud(cloud_filtered2);
     seg.setInputNormals(cloud_normals2);
 
@@ -139,6 +139,35 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
         return;
     }
 
+    // Get the inlier points of the cylinder
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cylinder_points(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::copyPointCloud(*cloud_filtered2, *inliers_cylinder, *cylinder_points);
+
+    // Calculate the height of the cylinder
+    float min_z = std::numeric_limits<float>::max();
+    float max_z = std::numeric_limits<float>::min();
+    for (const auto& point : cylinder_points->points) {
+        min_z = std::min(min_z, point.z);
+        max_z = std::max(max_z, point.z);
+    }
+    double height = max_z - min_z;
+
+    // Get the radius of the cylinder
+    double radius = (*coefficients_cylinder).values[6];
+
+    // Calculate the proportion of the cylinder
+    double proportion = height / (2 * radius);
+
+    double min_proportion = 2.8;  // minimum allowed height/diameter ratio
+    double max_proportion = 3.2;  // maximum allowed height/diameter ratio
+
+    // Filter the cylinder based on its proportion
+    if (proportion < min_proportion || proportion > max_proportion) {
+        // The cylinder does not meet the criteria, so discard it
+        return;
+    }
+
+    // The cylinder meets the criteria, so keep it
     if (verbose) {
         std::cerr << "Cylinder coefficients: " << *coefficients_cylinder << std::endl;
     }
@@ -208,8 +237,8 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     marker.pose.orientation.z = 0.0;
     marker.pose.orientation.w = 1.0;
 
-    marker.scale.x = 0.1;
-    marker.scale.y = 0.1;
+    marker.scale.x = detected_radius * 2;
+    marker.scale.y = detected_radius * 2;
     marker.scale.z = 0.1;
 
     marker.color.r = 0.0f;

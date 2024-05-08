@@ -79,17 +79,21 @@ class RobotCommander(Node):
                                  self._dockCallback,
                                  qos_profile_sensor_data)
 
-        self.localization_pose_sub = self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose',
+        self.localization_pose_sub = self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose',
                                                               self._amclPoseCallback,
                                                               amcl_pose_qos)
 
-        self.people_marker_sub = self.create_subscription(Marker, 'people_marker',
-                                                          self._peopleMarkerCallback,
-                                                          QoSReliabilityPolicy.BEST_EFFORT)
+        # self.people_marker_sub = self.create_subscription(Marker, 'people_marker',
+        #                                                   self._peopleMarkerCallback,
+        #                                                   QoSReliabilityPolicy.BEST_EFFORT)
+
+        self.ring_sub = self.create_subscription(PointStamped, "/ring", self.ring_callback, qos_profile)
 
         # ROS2 publishers
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
-        self.face_pub = self.create_publisher(PointStamped, 'face', qos_profile)
+        #self.face_pub = self.create_publisher(PointStamped, 'face', qos_profile)
+        self.ring_pub = self.create_publisher(PointStamped, '/ring_robot', qos_profile)
+
 
         # ROS2 Action clients
         self.nav_to_pose_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
@@ -98,9 +102,11 @@ class RobotCommander(Node):
         self.dock_action_client = ActionClient(self, Dock, 'dock')
 
         self.latest_people_marker_pose = None
+        self.detected_ring = None
         self.current_pose = None
         self.hellos_said = 0
-        self.rings_detected = 0
+        self.rings_detected_num = 0
+        self.rings_detected = []
 
         #self.audio_engine = pyttsx3.init()
 
@@ -329,6 +335,52 @@ class RobotCommander(Node):
         self.get_logger().debug(msg)
         return
 
+    def ring_callback(self, msg):
+        self.detected_ring = msg
+
+    def check_rings(self, point):
+        coord_ring_relative_to_r = self.detected_ring
+        if coord_ring_relative_to_r is not None:
+            coord_ring_relative_to_r = coord_ring_relative_to_r.point
+            self.get_logger().info(f"----------------------------")
+            
+            coord_ring = PoseStamped()
+            coord_ring.header.frame_id = 'map'
+            coord_ring.header.stamp = self.get_clock().now().to_msg()
+
+            x = point[0] + coord_ring_relative_to_r.x
+            y = point[1] + coord_ring_relative_to_r.y
+            z = coord_ring_relative_to_r.z + point[2]
+            #self.get_logger().info(f"----------------------------> {z}")
+
+            x1 = coord_ring_relative_to_r.x
+            y1 = coord_ring_relative_to_r.y
+            z1 = coord_ring_relative_to_r.z
+            coord_ring.pose.position.x = x
+            coord_ring.pose.position.y = y
+            coord_ring.pose.orientation = self.YawToQuaternion(z)
+            if self.rings_detected_num != 0:
+                for ring in self.rings_detected:
+                    if abs(x - ring.pose.position.x) < 1.5 and abs(y - ring.pose.position.y) < 2.5:
+                        self.get_logger().info(f"Ring already marked")
+                        
+                        return False
+            
+            self.rings_detected.append(coord_ring)
+            self.rings_detected_num += 1
+            point_msg = PointStamped()
+            point_msg.header.frame_id = self.detected_ring.header.frame_id
+            point_msg.header.stamp = self.get_clock().now().to_msg()
+            point_msg.point = coord_ring_relative_to_r
+
+            self.ring_pub.publish(point_msg)
+
+            self.get_logger().info(f"Number of detected rings so far: {len(self.rings_detected)}")
+            for l in range(len(self.rings_detected)):
+                self.get_logger().info(f"ring {l}: x: {self.rings_detected[l].pose.position.x}, y: {self.rings_detected[l].pose.position.y}, z: {self.rings_detected[l].pose.orientation.z}")
+
+        return True
+
     def check_approach(self, marked_poses, point):
         self.get_logger().info(f"IM LOOKING FOR FACES")
         #Check if there is a new 'people_marker' pose to go to first
@@ -467,10 +519,9 @@ def main(args=None):
 
     marked_poses = []
     i = 0
-    while len(points) > i or rc.rings_detected <= 4:
+    while len(points) > i or rc.rings_detected_num <= 4:
         try:
             point = points[i]
-            # If no new 'people_marker' pose, proceed with the next point in the list
             goal_pose = PoseStamped()
             goal_pose.header.frame_id = 'map'
             goal_pose.header.stamp = rc.get_clock().now().to_msg()
@@ -484,7 +535,8 @@ def main(args=None):
                 rc.info("Waiting for the task to complete...")
                 time.sleep(1)
 
-            rc.latest_people_marker_pose = None
+            #rc.rings_detected = None
+            found_ring = False
             spin_dist = 0.5 * math.pi
             n = 0
             while n < 4:
@@ -493,15 +545,15 @@ def main(args=None):
                 while not rc.isTaskComplete():
                     rc.info("Waiting for the task to complete...")
                     rc.get_logger().info(f"curr pose x: {rc.current_pose.pose.position.x} y: {rc.current_pose.pose.position.y} z: {rc.current_pose.pose.orientation.z}")
-                    approached_face, marked_poses = rc.check_approach(marked_poses, point)
-                    if(rc.hellos_said >= 3):
-                        time.sleep(2)
-                        rc.info("I have greeted 3 people, I am done!")
-                        rc.greet_face("I am done with this shit")
-                        rc.destroyNode()
-                        break
-                    if approached_face:
-                        n = 0
+                    found_ring = rc.check_rings(point)
+                    # if(rc.hellos_said >= 3):
+                    #     time.sleep(2)
+                    #     rc.info("I have greeted 3 people, I am done!")
+                    #     rc.greet_face("I am done with this shit")
+                    #     rc.destroyNode()
+                    #     break
+                    # if found_ring:
+                    #     n = 0
                     # rc.check_approach(marked_poses, rc.current_pose)
                     time.sleep(1)
             i+=1

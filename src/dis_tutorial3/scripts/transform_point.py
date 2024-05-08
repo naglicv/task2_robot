@@ -43,8 +43,8 @@ class TranformPoints(Node):
 
         # For publishing the markers
         self.marker_pub = self.create_publisher(Marker, "/breadcrumbs", QoSReliabilityPolicy.BEST_EFFORT)
-        self.face_sub = self.create_subscription(PointStamped, "/face", self.face_callback, qos_profile)
-        self.ring_sub = self.create_subscription(PointStamped, "/ring", self.ring_callback, qos_profile)
+        #self.face_sub = self.create_subscription(PointStamped, "/face", self.face_callback, qos_profile)
+        self.ring_sub = self.create_subscription(PointStamped, "/ring_robot", self.ring_callback, qos_profile)
         #self.cylinder_sub = self.create_subscription(PointStamped, "/cylinder", self.cylinder_callback, qos_profile)
         #self.cylinder_sub = self.create_subscription(PointStamped, "/detected_cylinder", self.cylinder_callback, qos_profile)
         #self.parking_space_sub = self.create_subscription(PointStamped, "/parking_space", self.parking_space_callback, qos_profile)
@@ -62,7 +62,6 @@ class TranformPoints(Node):
 
     def cylinder_callback(self, msg):
         self.get_logger().info(f"Received cylinder point: {msg.point.x}, {msg.point.y}, {msg.point.z}")
-
         self.cylinder_point_in_robot_frame = msg
 
     def parking_space_callback(self, msg):
@@ -71,42 +70,47 @@ class TranformPoints(Node):
 
     def timer_callback(self):
         points_to_transform = [
-            (self.face_point_in_robot_frame, "face", [1.0, 0.0, 0.0]), # Red for face
+            #(self.face_point_in_robot_frame, "face", [1.0, 0.0, 0.0]), # Red for face
             (self.ring_point_in_robot_frame, "ring", [0.0, 1.0, 0.0]), # Green for ring
-            (self.cylinder_point_in_robot_frame, "cylinder", [0.0, 0.0, 1.0]), # Blue for cylinder
-            (self.parking_space_point_in_robot_frame, "parking_space", [1.0, 1.0, 0.0]) # Yellow for parking space
+            #(self.cylinder_point_in_robot_frame, "cylinder", [0.0, 0.0, 1.0]), # Blue for cylinder
+            #(self.parking_space_point_in_robot_frame, "parking_space", [1.0, 1.0, 0.0]) # Yellow for parking space
         ]
 
-        for point, label, color in points_to_transform:
-            if point is not None:
-                self.get_logger().info(f"--> Transforming {label}")
+        #for point, label, color in points_to_transform:
+        color = [0.0, 1.0, 0.0]
+        label = "ring"
+        point = self.ring_point_in_robot_frame
+        if point is not None:
+            self.get_logger().info(f"--> Transforming {label}")
 
-                time_now = rclpy.time.Time()
-                timeout = Duration(seconds=0.1)
-                try:
-                    trans = self.tf_buffer.lookup_transform("map", "base_link", time_now, timeout)
-                    self.get_logger().info(f"Looks like the transform is available for {label}.")
+            time_now = rclpy.time.Time()
+            timeout = Duration(seconds=0.1)
+            try:
+                camera_frame = point.header.frame_id
+                map_frame = "map" 
+                transform = self.tf_buffer.lookup_transform(map_frame, camera_frame, time_now, timeout)
+                self.get_logger().info(f"Looks like the transform is available for {label}.")
 
-                    point_in_map_frame = tfg.do_transform_point(point, trans)
-                    self.get_logger().info(f"We transformed a PointStamped for {label}!")
+                point_in_map_frame = tfg.do_transform_point(point, transform)
+                self.get_logger().info(f"We transformed a PointStamped for {label}!")
 
-                    marker_in_map_frame = self.create_marker(point_in_map_frame, self.marker_id, label, color)
+                marker_in_map_frame = self.create_marker(point_in_map_frame, self.marker_id, label, color)
 
-                    self.marker_pub.publish(marker_in_map_frame)
-                    self.get_logger().info(f"The marker for {label} has been published to /breadcrumbs. You are able to visualize it in RViz")
+                self.marker_pub.publish(marker_in_map_frame)
+                self.get_logger().info(f"The marker for {label} has been published to /breadcrumbs. You are able to visualize it in RViz")
 
-                    self.marker_id += 1
-                    if label == "face":
-                        self.face_point_in_robot_frame = None
-                    elif label == "ring":
-                        self.ring_point_in_robot_frame = None
-                    elif label == "cylinder":
-                        self.cylinder_point_in_robot_frame = None
-                    elif label == "parking_space":
-                        self.parking_space_point_in_robot_frame = None
+                self.marker_id += 1
+                if label == "face":
+                    self.face_point_in_robot_frame = None
+                elif label == "ring":
+                    self.ring_point_in_robot_frame = None
+                elif label == "cylinder":
+                    self.cylinder_point_in_robot_frame = None
+                elif label == "parking_space":
+                    self.parking_space_point_in_robot_frame = None
 
-                except TransformException as te:
-                    self.get_logger().info(f"Could not get the transform for {label}: {te}")
+            except TransformException as te:
+                self.get_logger().info(f"Could not get the transform for {label}: {te}")
 
     def create_marker(self, point_stamped, marker_id, label, color):
         marker = Marker()
@@ -118,7 +122,7 @@ class TranformPoints(Node):
         marker.id = marker_id
 
         # Set the scale of the marker
-        scale = 0.15
+        scale = 0.3
         marker.scale.x = scale
         marker.scale.y = scale
         marker.scale.z = scale

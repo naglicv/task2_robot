@@ -44,9 +44,9 @@ class RingDetector(Node):
         self.ring_pub = self.create_publisher(PointStamped, "/ring", qos_profile)
 
         # Object we use for transforming between coordinate frames
-        # self.tf_buf = tf2_ros.Buffer()
-        # self.tf_listener = tf2_ros.TransformListener(self.tf_buf)
-
+        self.tf_buf = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buf, self)
+        
         cv2.namedWindow("Binary Image", cv2.WINDOW_NORMAL)
         cv2.namedWindow("Detected contours", cv2.WINDOW_NORMAL)
         cv2.namedWindow("Detected rings", cv2.WINDOW_NORMAL)
@@ -77,9 +77,10 @@ class RingDetector(Node):
         gray = cv2.equalizeHist(gray)
 
         # Binarize the image, there are different ways to do it
-        #ret, thresh = cv2.threshold(img, 50, 255, 0)
-        #ret, thresh = cv2.threshold(img, 70, 255, cv2.THRESH_BINARY)
-        thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 15, 30)
+        ret, thresh = cv2.threshold(gray, 40, 255, 0)
+        #ret, thresh = cv2.threshold(gray, 70, 255, cv2.THRESH_BINARY)
+        #thresh3 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 15, 30)
+
         cv2.imshow("Binary Image", thresh)
         cv2.waitKey(1)
 
@@ -133,14 +134,19 @@ class RingDetector(Node):
 
                 # The centers of the two elipses should be within 5 pixels of each other (is there a better treshold?)
                 if dist >= 5:
+                    print("removed: centers")
                     continue
 
-                # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
-                # cv2.imshow("Non Depth verified rings",cv_image)
+                cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
+                cv2.imshow("Non Depth verified rings 1",cv_image)
 
                 # The rotation of the elipses should be whitin 4 degrees of eachother
                 if angle_diff>4:
+                    print("removed: angle")
                     continue
+
+                cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
+                cv2.imshow("Non Depth verified rings 2",cv_image)
 
                 e1_minor_axis = e1[1][0]
                 e1_major_axis = e1[1][1]
@@ -166,7 +172,7 @@ class RingDetector(Node):
                     
                 candidates.append((e1,e2))
 
-        # print("Processing is done! found", len(candidates), "candidates for rings")
+        print("Processing is done! found", len(candidates), "candidates for rings")
 
         # Plot the rings on the image
         for c in candidates:
