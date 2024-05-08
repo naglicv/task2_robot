@@ -17,13 +17,17 @@
 from enum import Enum
 import time
 
+import numpy as np
+
 from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import Quaternion, PoseStamped, PoseWithCovarianceStamped, PointStamped
+from geometry_msgs.msg import Quaternion, PoseStamped, PoseWithCovarianceStamped, PointStamped, Twist
 from lifecycle_msgs.srv import GetState
 from nav2_msgs.action import Spin, NavigateToPose
 from turtle_tf2_py.turtle_tf2_broadcaster import quaternion_from_euler
 from visualization_msgs.msg import Marker
+from cv_bridge import CvBridge, CvBridgeError
+from sensor_msgs.msg import Image
 
 from irobot_create_msgs.action import Dock, Undock
 from irobot_create_msgs.msg import DockStatus
@@ -73,6 +77,11 @@ class RobotCommander(Node):
         self.initial_pose_received = False
         self.is_docked = None
 
+        self.camera_image = None
+        self.processing_position = False
+        self.parked = False
+        self.img_updated = False
+
         # ROS2 subscribers
         self.create_subscription(DockStatus,
                                  'dock_status',
@@ -86,6 +95,16 @@ class RobotCommander(Node):
         self.people_marker_sub = self.create_subscription(Marker, 'people_marker',
                                                           self._peopleMarkerCallback,
                                                           QoSReliabilityPolicy.BEST_EFFORT)
+        self.camera_sub = self.create_subscription(Image,
+                                                   '/top_camera/rgb/preview/image_raw',
+                                                   self.camera_callback,
+                                                   qos_profile_sensor_data)
+
+        self.ring_sub = self.create_subscription(Marker, "/breadcrumbs", self.breadcrumbs_callback, QoSReliabilityPolicy.BEST_EFFORT)
+
+        self.vel_pub = self.create_publisher(Twist,
+                                             '/cmd_vel_nav',
+                                             10)
 
         # ROS2 publishers
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
@@ -106,11 +125,280 @@ class RobotCommander(Node):
 
         self.get_logger().info(f"Robot commander has been initialized!")
 
+    def breadcrumbs_callback(self, msg):
+        self.latest_ring_marker_pose = msg.pose.position
+        self.rings_detected += 1
+
+        if self.rings_detected == 4:
+            self.goToPose(msg.pose)
+            while not self.isTaskComplete():
+                self.info("Moving back to the point...")
+                time.sleep(1)
+            
+            while not rc.parked:
+                self.park()
+                if self.parked:
+                    break
+                rclpy.spin_once(self)
+
+                self.parked = False
+                self.final_check_left()
+                while not self.isTaskComplete():
+                    self.info("Waiting for the task to complete...")
+                    rclpy.spin_once(self)
+                    time.sleep(1)
+                time.sleep(4.0)    
+                rclpy.spin_once(self)
+                #self.park()
+                self.parked = False
+                rclpy.spin_once(self)
+                self.final_check_right()
+                while not self.isTaskComplete():
+                    self.info("Waiting for the task to complete...")
+                    rclpy.spin_once(self)
+                    time.sleep(1)
+                time.sleep(4.0)    
+                rclpy.spin_once(self)
+                self.parked = False
+                self.final_check_left()
+                while not self.isTaskComplete():
+                    self.info("Waiting for the task to complete...")
+                    rclpy.spin_once(self)
+                    time.sleep(1)
+                time.sleep(4.0)
+                rclpy.spin_once(self)
+                self.parked = False
+                self.final_check_left()
+                while not self.isTaskComplete():
+                    self.info("Waiting for the task to complete...")
+                    rclpy.spin_once(self)
+                    time.sleep(1)
+                time.sleep(4.0)    
+                rclpy.spin_once(self)
+                self.parked = False
+                self.final_check_left()
+                while not self.isTaskComplete():
+                    self.info("Waiting for the task to complete...")
+                    rclpy.spin_once(self)
+                    time.sleep(1)
+                rclpy.spin_once(self)
+
+                self.get_logger().info(f"Ring detected at x: {self.latest_ring_marker_pose.x}, y: {self.latest_ring_marker_pose.y}, z: {self.latest_ring_marker_pose.z}")
+
     def greet_face(self, msg):
         #self.audio_engine.say(msg)
         #self.audio_engine.runAndWait()
         # self.get_logger().info(msg)
         pass
+
+    def camera_callback(self, msg):
+        try:
+            #this line should convert img to cv-format but it it not working :(
+            #Maybe I have to install cv_bridge lib but i cannot cause i am not sudo
+            #So i am not sure how this works (cannot check)
+            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            self.camera_image = cv_image
+        except CvBridgeError as e:
+            self.get_logger().error(f"Error converting image: {e}")
+        return
+
+    def park(self):
+        self.get_logger().info("PARKINGGGGGGGGGGGGGGGG")
+        rclpy.spin_once(self)
+        while not self.camera_image.any():
+            self.debug('Waiting for camera image...')
+            time.sleep(0.1)
+
+        try:
+            cv_image = self.camera_image
+            height, width, _ = cv_image.shape
+            size = min(height, width)
+            #cv_image = cv_image[:size, :size]
+
+            half_size = size // 2
+            top_left = cv_image[:half_size, :half_size]
+            top_right = cv_image[:half_size, half_size:]
+            bottom_left = cv_image[half_size:, :half_size]
+            bottom_right = cv_image[half_size:, half_size:]
+
+            black_pixels_top_left = np.sum(top_left < [5, 5, 5])
+            black_pixels_top_right = np.sum(top_right < [5, 5, 5])
+            black_pixels_bottom_left = np.sum(bottom_left < [5, 5, 5])
+            black_pixels_bottom_right = np.sum(bottom_right < [5, 5, 5])
+
+            #total_pixels = size * size
+            #black_percentage_top = (black_pixels_top_left + black_pixels_top_right) / total_pixels
+            #black_percentage_bottom = (black_pixels_bottom_left + black_pixels_bottom_right) / total_pixels
+
+            if (black_pixels_bottom_left + black_pixels_bottom_right == 0 or black_pixels_bottom_left + black_pixels_bottom_right <6000) and black_pixels_top_right + black_pixels_top_left == 0:  # If black is mostly on the bottom
+                self.get_logger().info("Reached parking spot. Stopping.")
+                self.get_logger().info(f"NUM OF PIXELS: {black_pixels_bottom_right + black_pixels_bottom_left}")
+                self.parked = True
+                # rclpy.spin_once(self)
+                while not self.camera_image.any():
+                    self.debug('Waiting for camera image...')
+                    time.sleep(0.1)
+                return
+
+
+            velocity_msg_processing = Twist()
+            if (black_pixels_bottom_left > 0 and black_pixels_top_left > 0) and black_pixels_bottom_right + black_pixels_top_right == 0:
+                self.get_logger().info("PROCESSING WHERE AM I. LEFT SIDE")
+                pixel_sum = black_pixels_bottom_left + black_pixels_top_left
+                velocity_msg_processing.angular.z = -0.7
+                self.vel_pub.publish(velocity_msg_processing)
+                self.get_logger().info("TURNED LEFT")
+                rclpy.spin_once(self)
+                while not self.camera_image.any():
+                    self.debug('Waiting for camera image...')
+                    time.sleep(0.1)
+                time.sleep(1.5)
+                #i m not sure if this is OK?
+                cv_image_new = self.camera_image
+                height, width, _ = cv_image_new.shape
+                size = min(height, width)
+                #cv_image_new = cv_image_new[:size, :size]
+
+                half_size = size // 2
+                top_left_new = cv_image_new[:half_size, :half_size]
+                top_right_new = cv_image_new[:half_size, half_size:]
+                bottom_left_new = cv_image_new[half_size:, :half_size]
+                bottom_right_new = cv_image_new[half_size:, half_size:]
+
+                black_pixels_top_left_new = np.sum(top_left_new < [5, 5, 5])
+                black_pixels_top_right_new = np.sum(top_right_new < [5, 5, 5])
+                black_pixels_bottom_left_new = np.sum(bottom_left_new < [5, 5, 5])
+                black_pixels_bottom_right_new = np.sum(bottom_right_new < [5, 5, 5])
+
+                if pixel_sum +20> black_pixels_bottom_left_new + black_pixels_top_left_new + black_pixels_top_right_new + black_pixels_bottom_right_new:
+                    self.get_logger().info("CHANGING DIRECTION. SEEMS 1ST ONE WAS WRONG!")
+                    velocity_msg_processing.angular.z = 1.8
+                    self.vel_pub.publish(velocity_msg_processing)
+                    self.get_logger().info("TURNED RIGHT")
+                    self.processing_position = False
+                self.processing_position = False
+
+            if (black_pixels_bottom_right > 0 and black_pixels_top_right > 0) and black_pixels_bottom_left + black_pixels_top_left == 0:
+                self.get_logger().info("PROCESSING WHERE AM I. RIGHT SIDE")
+                pixel_sum = black_pixels_bottom_right + black_pixels_top_right
+                velocity_msg_processing.angular.z = 0.7
+                self.vel_pub.publish(velocity_msg_processing)
+                self.get_logger().info("TURNED RIGHT")
+                rclpy.spin_once(self)
+                while not self.camera_image.any():
+                    self.debug('Waiting for camera image...')
+                    time.sleep(0.1)
+                time.sleep(1.5)
+                #i m not sure if this is OK?
+                cv_image_new = self.camera_image
+                height, width, _ = cv_image_new.shape
+                size = min(height, width)
+                #cv_image_new = cv_image_new[:size, :size]
+
+                half_size = size // 2
+                top_left_new = cv_image_new[:half_size, :half_size]
+                top_right_new = cv_image_new[:half_size, half_size:]
+                bottom_left_new = cv_image_new[half_size:, :half_size]
+                bottom_right_new = cv_image_new[half_size:, half_size:]
+
+                black_pixels_top_left_new = np.sum(top_left_new < [5, 5, 5])
+                black_pixels_top_right_new = np.sum(top_right_new < [5, 5, 5])
+                black_pixels_bottom_left_new = np.sum(bottom_left_new < [5, 5, 5])
+                black_pixels_bottom_right_new = np.sum(bottom_right_new < [5, 5, 5])
+
+                if pixel_sum +20> black_pixels_bottom_left_new + black_pixels_top_left_new + black_pixels_top_right_new + black_pixels_bottom_right_new:
+                    self.get_logger().info("CHANGING DIRECTION. SEEMS 1ST ONE WAS WRONG!")
+                    velocity_msg_processing.angular.z = -1.8
+                    self.vel_pub.publish(velocity_msg_processing)
+                    self.get_logger().info("TURNED LEFT")
+                    self.processing_position = False
+                self.processing_position = False
+
+
+
+            velocity_msg = Twist()
+
+            if black_pixels_bottom_left + black_pixels_bottom_right == 0 and black_pixels_top_left == 0 and black_pixels_top_right > 0:
+                velocity_msg.angular.z = -0.4
+                velocity_msg.linear.x = 0.4
+                self.get_logger().info("BLACK TOP-RIGHT")
+                self.vel_pub.publish(velocity_msg)
+                self.debug('Parking the robot...')
+                time.sleep(0.1)
+                time.sleep(1.5)
+                rclpy.spin_once(self)
+                while not self.camera_image.any():
+                    self.debug('Waiting for camera image...')
+                    time.sleep(0.1)
+                return
+            elif black_pixels_bottom_left + black_pixels_bottom_right == 0 and black_pixels_top_right == 0 and black_pixels_top_left > 0:
+                velocity_msg.angular.z = 0.4
+                velocity_msg.linear.x = 0.4
+                self.get_logger().info("BLACK TOP-LEFT")
+                self.vel_pub.publish(velocity_msg)
+                self.debug('Parking the robot...')
+                time.sleep(0.1)
+                time.sleep(1.5)
+                rclpy.spin_once(self)
+                while not self.camera_image.any():
+                    self.debug('Waiting for camera image...')
+                    time.sleep(0.1)
+                return
+            #elif black_pixels_top_left + black_pixels_top_right > 0 and black_pixels_bottom_left + black_pixels_bottom_right == 0:  # If black is mostly on top
+            #    velocity_msg.linear.x = 0.4
+            #    time.sleep(1.5)
+            else:
+                most_black_square_index = np.argmax([black_pixels_top_left, black_pixels_top_right, black_pixels_bottom_left, black_pixels_bottom_right])
+                if most_black_square_index == 0:
+                    velocity_msg.angular.z = -0.1
+                    velocity_msg.linear.x = 0.1
+                    self.get_logger().info("MOVING INSIDE CIRCLE")
+                    time.sleep(1.5)
+                elif most_black_square_index == 1:
+                    velocity_msg.angular.z = 0.1
+                    velocity_msg.linear.x = 0.1
+                    self.get_logger().info("MOVING INSIDE CIRCLE")
+                    time.sleep(1.5)
+                elif most_black_square_index == 2:
+                    velocity_msg.angular.z = -0.1
+                    velocity_msg.linear.x = 0.1
+                    self.get_logger().info("MOVING INSIDE CIRCLE")
+                    time.sleep(1.5)
+                elif most_black_square_index == 3:
+                    velocity_msg.angular.z = 0.1
+                    velocity_msg.linear.x = 0.1
+                    self.get_logger().info("MOVING INSIDE CIRCLE")
+                    time.sleep(1.5)
+            if not self.parked:
+                self.vel_pub.publish(velocity_msg)
+                self.debug('Parking the robot...')
+                time.sleep(0.1)
+                rclpy.spin_once(self)
+                return
+        except CvBridgeError as e:
+            self.get_logger().error(f"Error converting image: {e}")
+
+    def final_check_left(self):
+        rclpy.spin_once(self)
+        vel_msg = Twist()
+        vel_msg.angular.z = -4.5
+        self.vel_pub.publish(vel_msg)
+        time.sleep(4.0)
+        rclpy.spin_once(self)
+        self.get_logger().info(f"FINL CHECK LEFT")
+        self.park()
+        #rclpy.spin_once(self)
+
+    def final_check_right(self):
+        rclpy.spin_once(self)
+        vel_msg = Twist()
+        vel_msg.angular.z = -4.0
+        self.vel_pub.publish(vel_msg)
+        time.sleep(4.0)
+        rclpy.spin_once(self)
+        self.get_logger().info(f"FINL CHECK RIGHT")
+        self.park()
+        #rclpy.spin_once(self)
 
     def _peopleMarkerCallback(self, msg):
         """Handle new messages from 'people_marker'."""
@@ -283,7 +571,7 @@ class RobotCommander(Node):
             time.sleep(2)
         return
 
-    def YawToQuaternion(self, angle_z = 0.):
+    def YawToQuaternion(self, angle_z = 0.1):
         quat_tf = quaternion_from_euler(0, 0, angle_z)
 
         # Convert a list to geometry_msgs.msg.Quaternion
@@ -328,6 +616,62 @@ class RobotCommander(Node):
     def debug(self, msg):
         self.get_logger().debug(msg)
         return
+    
+    def check_ring(self, marked_rings, point):
+        self.get_logger().info(f"IM LOOKING FOR RINGS")
+        coord_ring_relative_to_r = self.latest_ring_marker_pose
+        if coord_ring_relative_to_r is not None:
+            coord_ring = PoseStamped()
+            coord_ring.header.frame_id = 'map'
+            coord_ring.header.stamp = self.get_clock().now().to_msg()
+
+            x = point[0] + coord_ring_relative_to_r.x
+            y = point[1] + coord_ring_relative_to_r.y
+            z = coord_ring_relative_to_r.z + point[2]
+            self.get_logger().info(f"----------------------------> {z}")
+
+            x1 = coord_ring_relative_to_r.x
+            y1 = coord_ring_relative_to_r.y
+            z1 = coord_ring_relative_to_r.z
+            coord_ring.pose.position.x = x
+            coord_ring.pose.position.y = y
+            coord_ring.pose.orientation = self.YawToQuaternion(z)
+            
+            if len(marked_rings) != 0:
+                for ring in marked_rings:
+                    if abs(x - ring.pose.position.x) < 1.5 and abs(y - ring.pose.position.y) < 2.5:
+                        self.get_logger().info(f"Face already marked")
+                        
+                        return False, marked_rings
+            
+            marked_rings.append(coord_ring)
+            point_msg = PointStamped()
+            point_msg.header.frame_id = 'base_link'
+            point_msg.header.stamp = self.get_clock().now().to_msg()
+            point_msg.point = coord_ring_relative_to_r
+            self.latest_ring_marker_pose = None
+            self.face_pub.publish(point_msg)
+
+            self.get_logger().info(f"Number of detected rings so far: {len(marked_rings)}")
+            for l in range(len(marked_rings)):
+                self.get_logger().info(f"ring {l}: x: {marked_rings[l].pose.position.x}, y: {marked_rings[l].pose.position.y}, z: {marked_rings[l].pose.orientation.z}")
+
+            # MOVE BACK TO THE POINT
+            goal_pose = PoseStamped()
+            goal_pose.pose.position.x = point[0]
+            goal_pose.pose.position.y = point[1]
+            ## fix maybe
+            goal_pose.pose.orientation = self.YawToQuaternion(point[2])
+
+            self.goToPose(goal_pose)
+            while not self.isTaskComplete():
+                self.info("Moving back to the point...")
+                time.sleep(1)
+            time.sleep(1)
+            
+            return True, marked_rings
+        else:
+            return False, marked_rings
 
     def check_approach(self, marked_poses, point):
         self.get_logger().info(f"IM LOOKING FOR FACES")
@@ -465,9 +809,9 @@ def main(args=None):
     # [2.23,-1.78,-1] --> 11
     # [0.63,-0.76,0.458],[1.5,-0.4,-0.069]   9 and 10 possitions!!!
 
-    marked_poses = []
+    marked_rings = []
     i = 0
-    while len(points) > i or rc.rings_detected <= 4:
+    while len(points) > i or rc.rings_detected <= 3:
         try:
             point = points[i]
             # If no new 'people_marker' pose, proceed with the next point in the list
@@ -484,7 +828,7 @@ def main(args=None):
                 rc.info("Waiting for the task to complete...")
                 time.sleep(1)
 
-            rc.latest_people_marker_pose = None
+            rc.latest_ring_marker_pose = None
             spin_dist = 0.5 * math.pi
             n = 0
             while n < 4:
@@ -493,14 +837,14 @@ def main(args=None):
                 while not rc.isTaskComplete():
                     rc.info("Waiting for the task to complete...")
                     rc.get_logger().info(f"curr pose x: {rc.current_pose.pose.position.x} y: {rc.current_pose.pose.position.y} z: {rc.current_pose.pose.orientation.z}")
-                    approached_face, marked_poses = rc.check_approach(marked_poses, point)
-                    if(rc.hellos_said >= 3):
+                    approached_ring, marked_rings = rc.check_ring(marked_rings, point)
+                    if(len(marked_rings) >= 3):
                         time.sleep(2)
                         rc.info("I have greeted 3 people, I am done!")
-                        rc.greet_face("I am done with this shit")
+                        #rc.greet_face("I am done with this shit")
                         rc.destroyNode()
                         break
-                    if approached_face:
+                    if approached_ring:
                         n = 0
                     # rc.check_approach(marked_poses, rc.current_pose)
                     time.sleep(1)

@@ -14,6 +14,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, qos_profile_sensor_data
+#import pyttsx3
 
 qos_profile = QoSProfile(
           durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
@@ -47,6 +48,10 @@ class RingDetector(Node):
         # Publiser for the visualization markers
         self.ring_pub = self.create_publisher(Marker, "/breadcrumbs", QoSReliabilityPolicy.BEST_EFFORT)
         self.ring_pub_point = self.create_publisher(PointStamped, "/ring", qos_profile)
+
+        #self.audio_engine = pyttsx3.init()
+
+        
         
 
         # Object we use for transforming between coordinate frames
@@ -60,7 +65,8 @@ class RingDetector(Node):
 
         self.rings = []
         self.rings_marked = []
-        self.depth_info = None        
+        self.depth_info = None
+        self.ring_detected = False        
 
     def image_callback(self, data):
         # self.get_logger().info(f"I got a new image! Will try to find rings...")
@@ -174,6 +180,13 @@ class RingDetector(Node):
                 color_exists = any(color == ring[2] for ring in self.rings)
                 if not color_exists:
                     self.rings.append((int(e1[0][0]), int(e1[0][1]), color))
+                else:
+                    continue
+
+                #self.audio_engine.say(color + " ring detected")
+                #self.audio_engine.runAndWait()
+
+                self.ring_detected = True
 
                 ## --------------------------------------------------------------
                 ## At this point we have a correct ring detected and the color of it. Need to mark this on the map.
@@ -268,6 +281,8 @@ class RingDetector(Node):
         min_circularity = 0.6
         max_hole_area_ratio = 0.5
 
+
+
         # Thresholding: Find pixels within the specified depth range
         mask = np.logical_and(depth_info >= min_radius, depth_info <= max_radius)
 
@@ -339,8 +354,8 @@ class RingDetector(Node):
 
 
         # Count the number of pixels for each color
-        blue_pixels = np.sum(roi[:,:,0] > 200)  # Assuming blue color has high blue channel intensity
-        green_pixels = np.sum(roi[:,:,1] > 200)  # Assuming green color has high green channel intensity
+        blue_pixels = np.sum(roi[:,:,0] > 185)  # Assuming blue color has high blue channel intensity
+        green_pixels = np.sum(roi[:,:,1] > 185)  # Assuming green color has high green channel intensity
         red_pixels = np.sum(roi[:,:,2] > 185)  # Assuming red color has high red channel intensity
 
         self.get_logger().info(f"blue px {blue_pixels}")
@@ -403,14 +418,16 @@ class RingDetector(Node):
         cv2.waitKey(1)
 
     def pointcloud_callback(self, data):
+        if self.ring_detected is False:
+            return
         # get point cloud attributes
         height = data.height
         width = data.width
         point_step = data.point_step
         row_step = data.row_step	    
-        # iterate over face coordinates
+        # iterate over ring coordinates
         for x,y,color in self.rings:
-            color_exists = any(color == marked_color for marked_color in self.rings_marked)
+            color_exists = any(color == marked_color[0] for marked_color in self.rings_marked)
 
             # color_exists = False
             if not color_exists:
@@ -419,6 +436,12 @@ class RingDetector(Node):
             else:
                 self.get_logger().info(f"Color already exists")
                 continue
+
+            if self.rings_marked == 3:
+                self.ring_pub.publish(marker)
+
+            
+            self.ring_detected = False
 
             # get 3-channel representation of the point cloud in numpy format
             a = pc2.read_points_numpy(data, field_names= ("x", "y", "z"))
@@ -447,6 +470,20 @@ class RingDetector(Node):
             marker.pose.position.z = float(d[2])    
             self.ring_pub.publish(marker)
 
+            green_ring = None
+
+            for ring in self.rings_marked:
+                color = ring[0]
+                if color == 'green':
+                    green_ring = ring
+                    break
+
+            if self.rings_marked == 3:
+                marker.pose.position.x = float(green_ring[2])
+                marker.pose.position.y = float(green_ring[3])
+                self.ring_pub.publish(marker)
+
+            
 
 def main():
 
