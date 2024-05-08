@@ -7,12 +7,13 @@ import numpy as np
 import tf2_ros
 
 from sensor_msgs.msg import Image, PointCloud2
+from sensor_msgs_py import point_cloud2 as pc2
 from geometry_msgs.msg import PointStamped, Vector3, Pose
 from cv_bridge import CvBridge, CvBridgeError
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, qos_profile_sensor_data
 
 qos_profile = QoSProfile(
           durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
@@ -38,6 +39,7 @@ class RingDetector(Node):
         # Subscribe to the image and/or depth topic
         self.image_sub = self.create_subscription(Image, "/oakd/rgb/preview/image_raw", self.image_callback, 1)
         self.depth_sub = self.create_subscription(Image, "/oakd/rgb/preview/depth", self.depth_callback, 1)
+        self.pointcloud_sub = self.create_subscription(PointCloud2, "/oakd/rgb/preview/depth/points", self.pointcloud_callback, qos_profile_sensor_data)
         # self.marker_pub = self.create_publisher(Marker, marker_topic, QoSReliabilityPolicy.BEST_EFFORT)
 
         #self.segmented_cloud_sub = self.create_subscription(PointCloud2, "/segmented_cloud", self.segmented_cloud_callback, 1)
@@ -56,6 +58,7 @@ class RingDetector(Node):
         cv2.namedWindow("Detected rings", cv2.WINDOW_NORMAL)
         cv2.namedWindow("Depth window", cv2.WINDOW_NORMAL)
 
+        self.rings = []
         self.depth_info = None        
 
     def image_callback(self, data):
@@ -167,6 +170,9 @@ class RingDetector(Node):
                 color = self.detect_ring_color(cv_image, (e2[0][0], e2[0][1]), e2[1][0], e2[1][1])
                 self.get_logger().info(f"e2 color {color}")
 
+                color_exists = any(color == ring[2] for ring in self.rings)
+                if not color_exists:
+                    self.rings.append((int(e1[0][0]), int(e1[0][1]), color))
 
                 ## --------------------------------------------------------------
                 ## At this point we have a correct ring detected and the color of it. Need to mark this on the map.
@@ -386,6 +392,42 @@ class RingDetector(Node):
 
         cv2.imshow("Depth window", image_viz)
         cv2.waitKey(1)
+
+    def pointcloud_callback(self, data):
+	    # get point cloud attributes
+	    height = data.height
+	    width = data.width
+	    point_step = data.point_step
+	    row_step = data.row_step		    
+	    # iterate over face coordinates
+	    for x,y,color in self.rings:    
+	    	# get 3-channel representation of the poitn cloud in numpy format
+	    	a = pc2.read_points_numpy(data, field_names= ("x", "y", "z"))
+	    	a = a.reshape((height,width,3)) 
+	    	# read center coordinates
+	    	d = a[y,x,:]    
+	    	# create marker
+	    	marker = Marker()   
+	    	marker.header.frame_id = "/base_link"
+	    	marker.header.stamp = data.header.stamp 
+	    	marker.type = 2
+	    	marker.id = 0   
+	    	# Set the scale of the marker
+	    	scale = 0.1
+	    	marker.scale.x = scale
+	    	marker.scale.y = scale
+	    	marker.scale.z = scale  
+	    	# Set the color
+	    	marker.color.r = 1.0
+	    	marker.color.g = 1.0
+	    	marker.color.b = 1.0
+	    	marker.color.a = 1.0    
+	    	# Set the pose of the marker
+	    	marker.pose.position.x = float(d[0])
+	    	marker.pose.position.y = float(d[1])
+	    	marker.pose.position.z = float(d[2])    
+	    	self.ring_pub.publish(marker)
+
 
 
 
