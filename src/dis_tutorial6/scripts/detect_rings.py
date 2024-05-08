@@ -59,6 +59,7 @@ class RingDetector(Node):
         cv2.namedWindow("Depth window", cv2.WINDOW_NORMAL)
 
         self.rings = []
+        self.rings_marked = []
         self.depth_info = None        
 
     def image_callback(self, data):
@@ -128,7 +129,7 @@ class RingDetector(Node):
                 # cv2.imshow("All higher ellipses",cv_image)    
 
                 # The centers of the two elipses should be within 5 pixels of each other (is there a better treshold?)
-                if dist >= 25:
+                if dist >= 50:
                     continue
 
                 # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
@@ -323,46 +324,54 @@ class RingDetector(Node):
         # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
         cv2.imshow("cropped image",roi)
 
-        gray_threshold = 1
-        gray_color = [178, 178, 178]
-        roi_filtered = roi[~np.all(np.abs(roi - gray_color) <= gray_threshold, axis=-1)]
+        # gray_threshold = 1
+        # gray_color = [178, 178, 178]
+        # roi_filtered = roi[~np.all(np.abs(roi - gray_color) <= gray_threshold, axis=-1)]
 
        
         # Convert the filtered ROI to HSV color space
         # Ensure that roi_filtered has 3 channels (RGB/BGR image)
-        if len(roi_filtered.shape) == 2:
-            roi_filtered = cv2.cvtColor(roi_filtered, cv2.COLOR_GRAY2BGR)
+        # if len(roi_filtered.shape) == 2:
+        #     roi_filtered = cv2.cvtColor(roi_filtered, cv2.COLOR_GRAY2BGR)
 
-        # Convert the filtered ROI to HSV color space
-        hsv_roi = cv2.cvtColor(roi_filtered, cv2.COLOR_BGR2HSV)
+        # # Convert the filtered ROI to HSV color space
+        # hsv_roi = cv2.cvtColor(roi_filtered, cv2.COLOR_BGR2HSV)
 
 
         # Count the number of pixels for each color
-        blue_pixels = np.sum(hsv_roi[:,:,0] > 170)  # Assuming blue color has high blue channel intensity
-        green_pixels = np.sum(hsv_roi[:,:,1] > 170)  # Assuming green color has high green channel intensity
-        red_pixels = np.sum(hsv_roi[:,:,2] > 185)  # Assuming red color has high red channel intensity
+        blue_pixels = np.sum(roi[:,:,0] > 200)  # Assuming blue color has high blue channel intensity
+        green_pixels = np.sum(roi[:,:,1] > 200)  # Assuming green color has high green channel intensity
+        red_pixels = np.sum(roi[:,:,2] > 185)  # Assuming red color has high red channel intensity
 
         self.get_logger().info(f"blue px {blue_pixels}")
         self.get_logger().info(f"green px {green_pixels}")
         self.get_logger().info(f"red px  {red_pixels}")
 
-        if red_pixels > 100:
-            return "red"
-        elif red_pixels != 0:
+        if (green_pixels > red_pixels or (green_pixels > 100 and red_pixels > 100 and blue_pixels > 100)):
             return "green"
+        elif (red_pixels > 10):
+            return "red"
         
-        return "blue"
+        else:
+            return "blue"
 
-        # Determine the color with the most pixels
-        max_pixels_color = max(blue_pixels, green_pixels, red_pixels)
+        # # if red_pixels > 100:
+        # #     return "red"
+        # # elif red_pixels != 0:
+        # #     return "green"
+        
+        # # return "blue"
 
-        # # Return the color with the most pixels
-        # if max_pixels_color == blue_pixels:
-        #     return "blue"
-        # elif max_pixels_color == green_pixels:
-        #     return "green"
-        # else:
-        #     return "red"
+        # # Determine the color with the most pixels
+        # max_pixels_color = max(blue_pixels, green_pixels, red_pixels)
+
+        # # # Return the color with the most pixels
+        # # if max_pixels_color == blue_pixels:
+        # #     return "blue"
+        # # elif max_pixels_color == green_pixels:
+        # #     return "green"
+        # # else:
+        # #     return "red"
 
 
     def depth_callback(self,data):
@@ -394,42 +403,49 @@ class RingDetector(Node):
         cv2.waitKey(1)
 
     def pointcloud_callback(self, data):
-	    # get point cloud attributes
-	    height = data.height
-	    width = data.width
-	    point_step = data.point_step
-	    row_step = data.row_step		    
-	    # iterate over face coordinates
-	    for x,y,color in self.rings:    
-	    	# get 3-channel representation of the poitn cloud in numpy format
-	    	a = pc2.read_points_numpy(data, field_names= ("x", "y", "z"))
-	    	a = a.reshape((height,width,3)) 
-	    	# read center coordinates
-	    	d = a[y,x,:]    
-	    	# create marker
-	    	marker = Marker()   
-	    	marker.header.frame_id = "/base_link"
-	    	marker.header.stamp = data.header.stamp 
-	    	marker.type = 2
-	    	marker.id = 0   
-	    	# Set the scale of the marker
-	    	scale = 0.1
-	    	marker.scale.x = scale
-	    	marker.scale.y = scale
-	    	marker.scale.z = scale  
-	    	# Set the color
-	    	marker.color.r = 1.0
-	    	marker.color.g = 1.0
-	    	marker.color.b = 1.0
-	    	marker.color.a = 1.0    
-	    	# Set the pose of the marker
-	    	marker.pose.position.x = float(d[0])
-	    	marker.pose.position.y = float(d[1])
-	    	marker.pose.position.z = float(d[2])    
-	    	self.ring_pub.publish(marker)
+        # get point cloud attributes
+        height = data.height
+        width = data.width
+        point_step = data.point_step
+        row_step = data.row_step	    
+        # iterate over face coordinates
+        for x,y,color in self.rings:
+            color_exists = any(color == marked_color for marked_color in self.rings_marked)
 
+            # color_exists = False
+            if not color_exists:
+                # color, id, x and y of the center of the ring
+                self.rings_marked.append((color, len(self.rings_marked), x, y))
+            else:
+                self.get_logger().info(f"Color already exists")
+                continue
 
-
+            # get 3-channel representation of the point cloud in numpy format
+            a = pc2.read_points_numpy(data, field_names= ("x", "y", "z"))
+            a = a.reshape((height,width,3))     
+            # read center coordinates
+            d = a[y,x,:]    
+            # create marker
+            marker = Marker()   
+            marker.header.frame_id = "/base_link"
+            marker.header.stamp = data.header.stamp 
+            marker.type = 2
+            marker.id = len(self.rings_marked) - 1  
+            # Set the scale of the marker
+            scale = 0.1
+            marker.scale.x = scale
+            marker.scale.y = scale
+            marker.scale.z = scale  
+            # Set the color
+            marker.color.r = 1.0
+            marker.color.g = 1.0
+            marker.color.b = 1.0
+            marker.color.a = 1.0    
+            # Set the pose of the marker
+            marker.pose.position.x = float(d[0])
+            marker.pose.position.y = float(d[1])
+            marker.pose.position.z = float(d[2])    
+            self.ring_pub.publish(marker)
 
 
 def main():
