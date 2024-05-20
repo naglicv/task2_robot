@@ -57,6 +57,7 @@ class detect_faces(Node):
 
 		try:
 			cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
+			height, _, _ = cv_image.shape
 
 			self.get_logger().info(f"Running inference on image...")
 
@@ -73,15 +74,18 @@ class detect_faces(Node):
 
 				bbox = bbox[0]
 
-				# draw rectangle
-				cv_image = cv2.rectangle(cv_image, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), self.detection_color, 3)
-
 				cx = int((bbox[0]+bbox[2])/2)
 				cy = int((bbox[1]+bbox[3])/2)
+				print(height)
+				print(cy)
 
-				max_height = 256 * 2/3
-				if cy > max_height:
+				height_max = height * 0.3
+				print(height_max)
+				if cy < height_max:
 					continue
+
+				# draw rectangle
+				cv_image = cv2.rectangle(cv_image, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), self.detection_color, 3)
 
 				# draw the center of bounding box
 				cv_image = cv2.circle(cv_image, (cx,cy), 5, self.detection_color, -1)
