@@ -45,6 +45,9 @@ class detect_faces(Node):
 		self.model = YOLO("yolov8n.pt")
 
 		self.faces = []
+		self.curr_id = 0
+		self.detected_faces = []
+		self.threshold = 1.0
 
 		self.get_logger().info(f"Node has been initialized! Will publish face markers to {marker_topic}.")
 
@@ -76,6 +79,10 @@ class detect_faces(Node):
 				cx = int((bbox[0]+bbox[2])/2)
 				cy = int((bbox[1]+bbox[3])/2)
 
+				max_height = 256 * 2/3
+				if cy > max_height:
+					continue
+
 				# draw the center of bounding box
 				cv_image = cv2.circle(cv_image, (cx,cy), 5, self.detection_color, -1)
 
@@ -90,51 +97,63 @@ class detect_faces(Node):
 		except CvBridgeError as e:
 			print(e)
 
+
 	def pointcloud_callback(self, data):
 
 		# get point cloud attributes
 		height = data.height
 		width = data.width
 		point_step = data.point_step
-		row_step = data.row_step		
+		row_step = data.row_step        
 
 		# iterate over face coordinates
 		for x,y in self.faces:
 
-			# get 3-channel representation of the poitn cloud in numpy format
+			# get 3-channel representation of the point cloud in numpy format
 			a = pc2.read_points_numpy(data, field_names= ("x", "y", "z"))
 			a = a.reshape((height,width,3))
 
 			# read center coordinates
 			d = a[y,x,:]
 
-			# create marker
-			marker = Marker()
+			# Check if this face has already been detected
+			face_location = np.array([d[0], d[1], d[2]])
+			for detected_face in self.detected_faces:
+				if np.all(np.abs(face_location - detected_face) <= self.threshold):
+					self.get_logger().info(f"Face already detected at {face_location}!")
+					break
+			else:
+				# Add the face location to the list of detected faces
+				self.detected_faces.append(face_location)
 
-			marker.header.frame_id = "/base_link"
-			marker.header.stamp = data.header.stamp
+				# create marker
+				marker = Marker()
 
-			marker.type = 2
-			marker.id = 0
+				marker.header.frame_id = "/base_link"
+				marker.header.stamp = data.header.stamp
 
-			# Set the scale of the marker
-			scale = 0.1
-			marker.scale.x = scale
-			marker.scale.y = scale
-			marker.scale.z = scale
+				#marker.type = 2
+				marker.id = self.curr_id
+				self.curr_id += 1
 
-			# Set the color
-			marker.color.r = 1.0
-			marker.color.g = 1.0
-			marker.color.b = 1.0
-			marker.color.a = 1.0
+				# Set the scale of the marker
+				scale = 0.1
+				marker.scale.x = scale
+				marker.scale.y = scale
+				marker.scale.z = scale
 
-			# Set the pose of the marker
-			marker.pose.position.x = float(d[0])
-			marker.pose.position.y = float(d[1])
-			marker.pose.position.z = float(d[2])
+				# Set the color
+				marker.color.r = 0.0
+				marker.color.g = 1.0
+				marker.color.b = 1.0
+				marker.color.a = 1.0
 
-			self.marker_pub.publish(marker)
+				# Set the pose of the marker
+				marker.pose.position.x = float(d[0])
+				marker.pose.position.y = float(d[1])
+				marker.pose.position.z = float(d[2])
+
+				self.marker_pub.publish(marker)
 
 def main():
 	print('Face detection node starting.')
