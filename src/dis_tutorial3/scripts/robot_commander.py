@@ -37,7 +37,7 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from rclpy.qos import qos_profile_sensor_data
 
 import math
-#import pyttsx3
+import pyttsx3
 
 
 class TaskResult(Enum):
@@ -107,8 +107,8 @@ class RobotCommander(Node):
         self.get_logger().info(f"Robot commander has been initialized!")
 
     def greet_face(self, msg):
-        #self.audio_engine.say(msg)
-        #self.audio_engine.runAndWait()
+        self.audio_engine.say(msg)
+        self.audio_engine.runAndWait()
         # self.get_logger().info(msg)
         pass
 
@@ -458,7 +458,9 @@ def main(args=None):
 
     # Finally send it a goal to reach
     #               1                2                  3                   4                 5                  6                7                   8                  9                 10                11              12               13                  14
-    points = [[-0.9, -0.4, 0,00],[-1.6, 1.22, 0.0],[-1.41, 4.36,-0.165],[-1.35, 3.17,-0.568],[1.9,3.04,0.57],[2.48,1.81,0.00247],[0.39,1.87,-0.207],[1.34,0.308,0.0582],[2.23,-1.78,-1],[3.27,-1.4,0.961],[1.14,-1.8,-1.0],[-0.16,-1.33,0.832]]
+    #
+    # points = [[-0.9, -0.4, 0,00],[-1.6, 1.22, 0.0],[-1.41, 4.36,-0.165],[-1.35, 3.17,-0.568],[1.9,3.04,0.57],[2.48,1.81,0.00247],[0.39,1.87,-0.207],[1.34,0.308,0.0582],[2.23,-1.78,-1],[3.27,-1.4,0.961],[1.14,-1.8,-1.0],[-0.16,-1.33,0.832]]
+    points = [[-1.89,0.29,0.00],[-0.806,0.312,0.00],[0.902,0.425,0.0024],[1.25,-1.87,0.00247],[-0.939,-1.59,-0.00534]]
     # ,[-0.7, 1.42,-0.584] 3
     # [-0.464, 0.18, 0,00]
     # [1.5,-0.4,-0.069] --> 10
