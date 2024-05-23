@@ -37,7 +37,7 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from rclpy.qos import qos_profile_sensor_data
 
 import math
-import pyttsx3
+# import pyttsx3
 
 
 class TaskResult(Enum):
@@ -83,13 +83,13 @@ class RobotCommander(Node):
                                                               self._amclPoseCallback,
                                                               amcl_pose_qos)
 
-        self.people_marker_sub = self.create_subscription(Marker, 'people_marker',
+        self.people_marker_sub = self.create_subscription(Marker, '/center_height_img',
                                                           self._peopleMarkerCallback,
                                                           QoSReliabilityPolicy.BEST_EFFORT)
 
         # ROS2 publishers
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
-        self.face_pub = self.create_publisher(PointStamped, 'face', qos_profile)
+        self.face_pub = self.create_publisher(Marker, '/people_marker', qos_profile)
 
         # ROS2 Action clients
         self.nav_to_pose_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
@@ -100,15 +100,15 @@ class RobotCommander(Node):
         self.latest_people_marker_pose = None
         self.current_pose = None
         self.hellos_said = 0
-        self.rings_detected = 0
+        self.faces_detected = 0
 
         #self.audio_engine = pyttsx3.init()
 
         self.get_logger().info(f"Robot commander has been initialized!")
 
     def greet_face(self, msg):
-        self.audio_engine.say(msg)
-        self.audio_engine.runAndWait()
+        # self.audio_engine.say(msg)
+        # self.audio_engine.runAndWait()
         # self.get_logger().info(msg)
         pass
 
@@ -440,6 +440,57 @@ class RobotCommander(Node):
         else:
             return False, marked_poses
 
+    def publish_marker_line(self):
+        curr_pose = self.current_pose.pose
+        marker = Marker()
+        marker.header.frame_id = "/base_link"
+        marker.type = marker.LINE_STRIP
+        marker.action = marker.ADD
+
+        # Marker scale
+        marker.scale.x = 0.01
+
+        # Marker color
+        marker.color.a = 1.0
+        marker.color.r = 1.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
+
+        # Marker orientation
+        marker.pose.orientation.x = pose.orientation.x
+        marker.pose.orientation.y = pose.orientation.y
+        marker.pose.orientation.z = pose.orientation.z
+        marker.pose.orientation.w = pose.orientation.w
+
+        # Marker line points
+        p1 = Point()
+        p1.x = pose.position.x
+        p1.y = pose.position.y
+        p1.z = pose.position.z
+        marker.points.append(p1)
+
+        # Convert quaternion to Euler
+        euler = tf.transformations.euler_from_quaternion([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w])
+
+        # Calculate new point in the direction the robot is facing
+        p2 = Point()
+        p2.x = p1.x + 1.0 * cos(euler[2])
+        p2.y = p1.y + 1.0 * sin(euler[2])
+        p2.z = p1.z
+        marker.points.append(p2)
+
+        # Publish the Marker
+        self.face_pub.publish(marker)
+        self.get_logger().info(f"Marker published")
+
+
+    def check_face(self):
+        if self.latest_people_marker_pose is not None:
+            self.get_logger().info(f"Face detected!")
+            self.faces_detected += 1
+            self.publish_marker_line()
+            self.get_logger().info(f"Number of faces detected so far: {self.faces_detected}\n")
+
 def main(args=None):
 
     rclpy.init(args=args)
@@ -459,8 +510,8 @@ def main(args=None):
     # Finally send it a goal to reach
     #               1                2                  3                   4                 5                  6                7                   8                  9                 10                11              12               13                  14
     #
-    # points = [[-0.9, -0.4, 0,00],[-1.6, 1.22, 0.0],[-1.41, 4.36,-0.165],[-1.35, 3.17,-0.568],[1.9,3.04,0.57],[2.48,1.81,0.00247],[0.39,1.87,-0.207],[1.34,0.308,0.0582],[2.23,-1.78,-1],[3.27,-1.4,0.961],[1.14,-1.8,-1.0],[-0.16,-1.33,0.832]]
-    points = [[-1.89,0.29,0.00],[-0.806,0.312,0.00],[0.902,0.425,0.0024],[1.25,-1.87,0.00247],[-0.939,-1.59,-0.00534]]
+    points = [[-0.9, -0.4, 0,00],[-1.6, 1.22, 0.0],[-1.41, 4.36,-0.165],[-1.35, 3.17,-0.568],[1.9,3.04,0.57],[2.48,1.81,0.00247],[0.39,1.87,-0.207],[1.34,0.308,0.0582],[2.23,-1.78,-1],[3.27,-1.4,0.961],[1.14,-1.8,-1.0],[-0.16,-1.33,0.832]]
+    #points = [[-1.89,0.29,0.00],[-0.806,0.312,0.00],[0.902,0.425,0.0024],[1.25,-1.87,0.00247],[-0.939,-1.59,-0.00534]]
     # ,[-0.7, 1.42,-0.584] 3
     # [-0.464, 0.18, 0,00]
     # [1.5,-0.4,-0.069] --> 10
@@ -469,10 +520,10 @@ def main(args=None):
 
     marked_poses = []
     i = 0
-    while len(points) > i or rc.rings_detected <= 4:
+    while len(points) > i or rc.faces_detected <= 3:
         try:
             point = points[i]
-            # If no new 'people_marker' pose, proceed with the next point in the list
+
             goal_pose = PoseStamped()
             goal_pose.header.frame_id = 'map'
             goal_pose.header.stamp = rc.get_clock().now().to_msg()
@@ -486,26 +537,34 @@ def main(args=None):
                 rc.info("Waiting for the task to complete...")
                 time.sleep(1)
 
-            rc.latest_people_marker_pose = None
-            spin_dist = 0.5 * math.pi
+            spin_dist = 0.25 * math.pi
             n = 0
-            while n < 4:
+            while n < 8:
                 rc.spin(spin_dist)
                 n+=1
                 while not rc.isTaskComplete():
-                    rc.info("Waiting for the task to complete...")
+                    rc.info("Spinning to next position...")
+                    time.sleep(0.5)
+            
+                rc.latest_people_marker_pose = None
+                time.sleep(1)
+                if rc.latest_people_marker_pose is not None:
                     rc.get_logger().info(f"curr pose x: {rc.current_pose.pose.position.x} y: {rc.current_pose.pose.position.y} z: {rc.current_pose.pose.orientation.z}")
-                    approached_face, marked_poses = rc.check_approach(marked_poses, point)
-                    if(rc.hellos_said >= 3):
-                        time.sleep(2)
-                        rc.info("I have greeted 3 people, I am done!")
-                        rc.greet_face("I am done with this shit")
-                        rc.destroyNode()
-                        break
-                    if approached_face:
-                        n = 0
-                    # rc.check_approach(marked_poses, rc.current_pose)
-                    time.sleep(1)
+                    rc.check_face()
+
+
+                    
+                approached_face, marked_poses = rc.check_approach(marked_poses, point)
+                if(rc.hellos_said >= 3):
+                    time.sleep(2)
+                    rc.info("I have greeted 3 people, I am done!")
+                    rc.greet_face("I am done with this shit")
+                    rc.destroyNode()
+                    break
+                if approached_face:
+                    n = 0
+                # rc.check_approach(marked_poses, rc.current_pose)
+                time.sleep(1)
             i+=1
         except IndexError:
             print(f"Error: Attempted to access index {i} in points list, which has {len(points)} elements.")
