@@ -52,7 +52,8 @@ def show_anomaly(image_path):
     error_map = calculate_reconstruction_error(original_img, reconstructed_img)
     mean_error = np.mean(error_map)
     
-    threshold = 0.01
+    #NOTE: For avoidint talking to pictures threshold = 0.1 else 0.01!!!
+    threshold = 0.1
     if mean_error > threshold:
         result = "Altered Mona Lisa"
     else:
@@ -87,5 +88,7 @@ def show_anomaly(image_path):
 #NOTE: Use test_.jpg to test if the model is working and if it's detecting anomalies!
 #      It's not working very good with test7.jpg.
 #      That's the picture I created with small anomaly. IDK how to fix it :(
-test_image_path = "test7.jpg"
+#      paintings_test.png is used to test if robot is gonna talk to paintings
+#      (works for now myb do some more tests!)
+test_image_path = "paintings_test.jpg"
 show_anomaly(test_image_path)
