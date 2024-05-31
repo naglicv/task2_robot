@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+import math
 import rclpy
 from rclpy.node import Node
 import cv2
@@ -49,10 +50,7 @@ class RingDetector(Node):
         self.ring_pub = self.create_publisher(Marker, "/breadcrumbs", QoSReliabilityPolicy.BEST_EFFORT)
         self.ring_pub_point = self.create_publisher(PointStamped, "/ring", qos_profile)
 
-        #self.audio_engine = pyttsx3.init()
-
-        
-        
+        # self.audio_engine = pyttsx3.init()
 
         # Object we use for transforming between coordinate frames
         # self.tf_buf = tf2_ros.Buffer()
@@ -66,7 +64,8 @@ class RingDetector(Node):
         self.rings = []
         self.rings_marked = []
         self.depth_info = None
-        self.ring_detected = False        
+        self.ring_detected = False
+        self.mapped_rings = []       
 
     def image_callback(self, data):
         # self.get_logger().info(f"I got a new image! Will try to find rings...")
@@ -112,87 +111,49 @@ class RingDetector(Node):
                 ellipse = cv2.fitEllipse(cnt)
                 elps.append(ellipse)
             
-
-        # Find two elipses with same centers
         candidates = []
         for n in range(len(elps)):
-            for m in range(n + 1, len(elps)):
-                # e[0] is the center of the ellipse (x,y), e[1] are the lengths of major and minor axis (major, minor), e[2] is the rotation in degrees
-                depth_info_local = self.depth_info
-                e1 = elps[n]
-                e2 = elps[m]
-                dist = np.sqrt(((e1[0][0] - e2[0][0]) ** 2 + (e1[0][1] - e2[0][1]) ** 2))
-                angle_diff = np.abs(e1[2] - e2[2])
+            
+               # e[0] is the center of the ellipse (x,y), e[1] are the lengths of major and minor axis (major, minor), e[2] is the rotation in degrees
+               depth_info_local = self.depth_info
+               e1 = elps[n]
+          
+               if e1[0][1] > 50:
+                   continue
+               
 
-                # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
-                # cv2.imshow("All fitted ellipeses",cv_image)    
+               e1_minor_axis = e1[1][0]
+               e1_major_axis = e1[1][1]
 
-                # this check seems weird but it works for distinguising rings on the ground vs high up (the ones we want)
-                if e1[0][1] > 80 or e2[0][1] > 80:
-                    continue
+               if e1_minor_axis > 35 or e1_major_axis > 35:
+                   continue
+            
+               # Verify detection with depth sensors to avoid cubes, 2d rings on the wall
+               if self.detect_depth_ring(depth_info_local, e1[0][0], e1[0][1], cv_image) is not True:
+                   continue
+            
+               color = self.detect_ring_color(cv_image, (e1[0][0], e1[0][1]), e1[1][0], e1[1][1])
+               self.get_logger().info(f"e1 color {color}")
+               color_exists = any(color == ring[2] for ring in self.rings)
+               if not color_exists:
+                    color2 = self.detect_ring_color(cv_image, (e1[0][0], e1[0][1]), e1[1][0], e1[1][1])
+                    color3 = self.detect_ring_color(cv_image, (e1[0][0], e1[0][1]), e1[1][0], e1[1][1])
+                    if color2 == color and color == color3:
+                        self.rings.append((int(e1[0][0]), int(e1[0][1]), color))
+                    else:
+                        self.get_logger().info(f"Colors did not match")
+               else:
+                   continue
+            #    self.audio_engine.say(color + " boooyah ring detected")
+            #    self.audio_engine.runAndWait()
 
-                # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
-                # cv2.imshow("All higher ellipses",cv_image)    
-
-                # The centers of the two elipses should be within 5 pixels of each other (is there a better treshold?)
-                if dist >= 50:
-                    continue
-
-                # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
-                # cv2.imshow("All higher with small distance ellipses",cv_image)
-
-                # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
-                # cv2.imshow("Non Depth verified rings",cv_image)
-
-                # The rotation of the elipses should be whitin 4 degrees of eachother
-                if angle_diff>15:
-                    continue
-
-                # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
-                # cv2.imshow("All lower diff ells",cv_image)
-
-                e1_minor_axis = e1[1][0]
-                e1_major_axis = e1[1][1]
-
-                e2_minor_axis = e2[1][0]
-                e2_major_axis = e2[1][1]
-
-                if e1_major_axis>=e2_major_axis and e1_minor_axis>=e2_minor_axis: # the larger ellipse should have both axis larger
-                    le = e1 # e1 is larger ellipse
-                    se = e2 # e2 is smaller ellipse
-                elif e2_major_axis>=e1_major_axis and e2_minor_axis>=e1_minor_axis:
-                    le = e2 # e2 is larger ellipse
-                    se = e1 # e1 is smaller ellipse
-                else:
-                    continue # if one ellipse does not contain the other, it is not a ring
-                
-                
-                
-                # Verify detection with depth sensors to avoid cubes, 2d rings on the wall
-                if self.detect_depth_ring(depth_info_local, e1[0][0], e1[0][1], cv_image) is not True:
-                    continue
-              
-                color = self.detect_ring_color(cv_image, (e1[0][0], e1[0][1]), e1[1][0], e1[1][1])
-                self.get_logger().info(f"e1 color {color}")
-                color = self.detect_ring_color(cv_image, (e2[0][0], e2[0][1]), e2[1][0], e2[1][1])
-                self.get_logger().info(f"e2 color {color}")
-
-                color_exists = any(color == ring[2] for ring in self.rings)
-                if not color_exists:
-                    self.rings.append((int(e1[0][0]), int(e1[0][1]), color))
-                else:
-                    continue
-
-                #self.audio_engine.say(color + " ring detected")
-                #self.audio_engine.runAndWait()
-
-                self.ring_detected = True
-
-                ## --------------------------------------------------------------
-                ## At this point we have a correct ring detected and the color of it. Need to mark this on the map.
-
-                    
-                candidates.append((e1,e2))
+            #    self.rings.append((int(e1[0][0]), int(e1[0][1]), color))
+            
+               self.ring_detected = True
+               ## --------------------------------------------------------------
+               ## At this point we have a correct ring detected and the color of it. Need to mark this on the map.
+                  
+               candidates.append(e1)
 
         # print("Processing is done! found", len(candidates), "candidates for rings")
 
@@ -200,13 +161,11 @@ class RingDetector(Node):
         for c in candidates:
 
             # the centers of the ellipses
-            e1 = c[0]
-            e2 = c[1]
+            e1 = c
 
             # drawing the ellipses on the image
             cv2.ellipse(cv_image, e1, (0, 255, 0), 2)
-            cv2.ellipse(cv_image, e2, (0, 255, 0), 2)
-
+           
             # Get a bounding box, around the first ellipse ('average' of both elipsis)
             size = (e1[1][0]+e1[1][1])/2
             center = (e1[0][1], e1[0][0])
@@ -223,10 +182,10 @@ class RingDetector(Node):
 
             # Assuming e1 and e2 are the ellipses you want to publish
             center_e1 = e1[0]
-            center_e2 = e2[0]
+            
 
             # Calculate the average center of e1 and e2
-            average_center = ((center_e1[0] + center_e2[0]) / 2, (center_e1[1] + center_e2[1]) / 2)
+            average_center = (center_e1[0], center_e1[1])
 
             # Create a new PointStamped message
             point = PointStamped()
@@ -241,33 +200,7 @@ class RingDetector(Node):
 
             # Publish the point
             self.ring_pub_point.publish(point)
-
-
-            marker = Marker()
-
-            marker.header.frame_id = "/map"
-            marker.header.stamp = data.header.stamp
-
-            marker.type = 2
-            marker.id = 0
-
-            # Set the scale of the marker
-            scale = 0.1
-            marker.scale.x = scale
-            marker.scale.y = scale
-            marker.scale.z = scale
-
-            # Set the color
-            marker.color.r = 1.0
-            marker.color.g = 0.0
-            marker.color.b = 0.0
-            marker.color.a = 1.0
-
-            # Set the pose of the marker
-            marker.pose.position.x = average_center[0]
-            marker.pose.position.y = average_center[1]
-            marker.pose.position.z = 0.0
-            self.ring_pub.publish(marker)
+       
 
         if len(candidates)>0:
                 cv2.imshow("Detected rings",cv_image)
@@ -327,8 +260,8 @@ class RingDetector(Node):
 
     def detect_ring_color(self, cv_image, center, x_axis_length, y_axis_length):
         x_center, y_center = center
-        half_x_length = x_axis_length // 2
-        half_y_length = y_axis_length // 2
+        half_x_length = (x_axis_length + 10) // 2
+        half_y_length = (y_axis_length + 10) // 2
         x_min = int(max(0, x_center - half_x_length))
         x_max = int(min(cv_image.shape[1], x_center + half_x_length))
         y_min = int(max(0, y_center - half_y_length))
@@ -339,54 +272,31 @@ class RingDetector(Node):
         # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
         cv2.imshow("cropped image",roi)
 
-        # gray_threshold = 1
-        # gray_color = [178, 178, 178]
-        # roi_filtered = roi[~np.all(np.abs(roi - gray_color) <= gray_threshold, axis=-1)]
-
-       
-        # Convert the filtered ROI to HSV color space
-        # Ensure that roi_filtered has 3 channels (RGB/BGR image)
-        # if len(roi_filtered.shape) == 2:
-        #     roi_filtered = cv2.cvtColor(roi_filtered, cv2.COLOR_GRAY2BGR)
-
-        # # Convert the filtered ROI to HSV color space
-        # hsv_roi = cv2.cvtColor(roi_filtered, cv2.COLOR_BGR2HSV)
-
 
         # Count the number of pixels for each color
-        blue_pixels = np.sum(roi[:,:,0] > 185)  # Assuming blue color has high blue channel intensity
-        green_pixels = np.sum(roi[:,:,1] > 185)  # Assuming green color has high green channel intensity
-        red_pixels = np.sum(roi[:,:,2] > 185)  # Assuming red color has high red channel intensity
+        blue_pixels = np.sum(roi[:,:,0] > 180)  # Assuming blue color has high blue channel intensity
+        green_pixels = np.sum(roi[:,:,1] > 180)  # Assuming green color has high green channel intensity
+        red_pixels = np.sum(roi[:,:,2] > 180)  # Assuming red color has high red channel intensity
 
-        self.get_logger().info(f"blue px {blue_pixels}")
-        self.get_logger().info(f"green px {green_pixels}")
-        self.get_logger().info(f"red px  {red_pixels}")
+        # self.get_logger().info(f"blue px {blue_pixels}")
+        # self.get_logger().info(f"green px {green_pixels}")
+        # self.get_logger().info(f"red px  {red_pixels}")
 
-        if (green_pixels > red_pixels or (green_pixels > 100 and red_pixels > 100 and blue_pixels > 100)):
-            return "green"
-        elif (red_pixels > 10):
-            return "red"
-        
-        else:
+
+        if blue_pixels > 10:
             return "blue"
+        elif blue_pixels > 2 and green_pixels > 2 and red_pixels > 0:
+            return "black"
+    
+        green_pixels = np.sum(roi[:,:,1] > 120)  
+        red_pixels = np.sum(roi[:,:,2] > 120)  
 
-        # # if red_pixels > 100:
-        # #     return "red"
-        # # elif red_pixels != 0:
-        # #     return "green"
+        # self.get_logger().info(f"green px {green_pixels}")
+        # self.get_logger().info(f"red px  {red_pixels}")
+        if green_pixels > red_pixels:
+            return "green"
         
-        # # return "blue"
-
-        # # Determine the color with the most pixels
-        # max_pixels_color = max(blue_pixels, green_pixels, red_pixels)
-
-        # # # Return the color with the most pixels
-        # # if max_pixels_color == blue_pixels:
-        # #     return "blue"
-        # # elif max_pixels_color == green_pixels:
-        # #     return "green"
-        # # else:
-        # #     return "red"
+        return "red"
 
 
     def depth_callback(self,data):
@@ -414,9 +324,6 @@ class RingDetector(Node):
         cv2.imshow("Depth window", image_viz)
         cv2.waitKey(1)
 
-        cv2.imshow("Depth window", image_viz)
-        cv2.waitKey(1)
-
     def pointcloud_callback(self, data):
         if self.ring_detected is False:
             return
@@ -437,9 +344,8 @@ class RingDetector(Node):
                 self.get_logger().info(f"Color already exists")
                 continue
 
-            if self.rings_marked == 3:
-                self.ring_pub.publish(marker)
-
+            self.get_logger().info(f"rawposition x {x}")
+            self.get_logger().info(f"rawposition y {y}")
             
             self.ring_detected = False
 
@@ -447,40 +353,79 @@ class RingDetector(Node):
             a = pc2.read_points_numpy(data, field_names= ("x", "y", "z"))
             a = a.reshape((height,width,3))     
             # read center coordinates
-            d = a[y,x,:]    
-            # create marker
-            marker = Marker()   
-            marker.header.frame_id = "/base_link"
-            marker.header.stamp = data.header.stamp 
-            marker.type = 2
-            marker.id = len(self.rings_marked) - 1  
-            # Set the scale of the marker
-            scale = 0.1
-            marker.scale.x = scale
-            marker.scale.y = scale
-            marker.scale.z = scale  
-            # Set the color
-            marker.color.r = 1.0
-            marker.color.g = 1.0
-            marker.color.b = 1.0
-            marker.color.a = 1.0    
-            # Set the pose of the marker
-            marker.pose.position.x = float(d[0])
-            marker.pose.position.y = float(d[1])
-            marker.pose.position.z = float(d[2])    
-            self.ring_pub.publish(marker)
+            for i in range(10, 50):
+                d = a[i,x,:]    
+                # create marker
+                # Set the pose of the marker
+                if math.isinf(d[0]) is not True:
+                    # create marker
+                    marker = Marker()   
+                    marker.header.frame_id = "/base_link"
+                    marker.header.stamp = data.header.stamp 
+                    marker.type = 2
+                    marker.id = len(self.rings_marked) - 1  
+                    # Set the scale of the marker
+                    scale = 0.1
+                    marker.scale.x = scale
+                    marker.scale.y = scale
+                    marker.scale.z = scale  
+                    # Set the color
+                    match color:
+                        case "red":
+                            marker.color.r = 255.0
+                            marker.color.g = 1.0
+                            marker.color.b = 1.0
+                            marker.color.a = 1.0   
+
+                        case "green":
+                            marker.color.r = 1.0
+                            marker.color.g = 255.0
+                            marker.color.b = 1.0
+                            marker.color.a = 1.0  
+                        case "blue":
+                            marker.color.r = 1.0
+                            marker.color.g = 1.0
+                            marker.color.b = 255.0
+                            marker.color.a = 1.0  
+                        
+                        case "black":
+                            marker.color.r = 255.0
+                            marker.color.g = 255.0
+                            marker.color.b = 255.0
+                            marker.color.a = 1.0  
+                        case _:
+                            marker.color.r = 1.0
+                            marker.color.g = 1.0
+                            marker.color.b = 1.0
+                            marker.color.a = 1.0  
+                  
+                    #    Set the pose of the marker
+                    marker.pose.position.x = float(d[0])
+                    marker.pose.position.y = float(d[1])
+                    marker.pose.position.z = float(d[2]) 
+                    self.get_logger().info(f"position x {d[0]}")
+                    self.get_logger().info(f"position y {d[1]}")
+                    self.get_logger().info(f"position z {d[2]}")
+
+                    self.ring_pub.publish(marker)
+                    self.mapped_rings.append((float(d[0]), float(d[1]), float(d[2]), color))
+
+                    break
+
+            # self.mapped_rings.append((float(d[0]), float(d[1]), float(d[2]), color))
 
             green_ring = None
 
-            for ring in self.rings_marked:
-                color = ring[0]
+            for ring in self.mapped_rings:
+                color = ring[3]
                 if color == 'green':
                     green_ring = ring
                     break
 
-            if self.rings_marked == 3:
-                marker.pose.position.x = float(green_ring[2])
-                marker.pose.position.y = float(green_ring[3])
+            if len(self.rings_marked) == 4:
+                marker.pose.position.x = float(green_ring[0])
+                marker.pose.position.y = float(green_ring[1])
+                self.get_logger().info(f"Found all the rings, publishing again")
                 self.ring_pub.publish(marker)
 
             
