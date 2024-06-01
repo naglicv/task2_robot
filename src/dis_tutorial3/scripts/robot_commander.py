@@ -17,6 +17,7 @@
 from enum import Enum
 import time
 
+import cv2
 import numpy as np
 
 from action_msgs.msg import GoalStatus
@@ -41,6 +42,8 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from rclpy.qos import qos_profile_sensor_data
 
 import math
+import tensorflow as tf
+import speech_recognition as sr
 #import pyttsx3
 
 
@@ -81,6 +84,10 @@ class RobotCommander(Node):
         self.processing_position = False
         self.parked = False
         self.img_updated = False
+        self.current_face = None # Used to store the img of face. With this we check if face is Mona Lisa or normal face
+        self.list_of_suggested_rings_1 = set() # Used for storing info of face we 1st visited-->2 colors saved
+        self.list_of_suggested_rings_2 = set() # Used for storing info of face we 2nd visited-->2 colors saved
+        self.ring_to_visit = None # Used for storing the ring we have to visit-->ring that is in both lists
 
         # ROS2 subscribers
         self.create_subscription(DockStatus,
@@ -99,6 +106,8 @@ class RobotCommander(Node):
                                                    '/top_camera/rgb/preview/image_raw',
                                                    self.camera_callback,
                                                    qos_profile_sensor_data)
+        
+        self.face_img_sub = self.create_subscription(Image, '/detected_face', self.save_face_callback, qos_profile_sensor_data)
 
         self.ring_sub = self.create_subscription(Marker, "/breadcrumbs", self.breadcrumbs_callback, QoSReliabilityPolicy.BEST_EFFORT)
 
@@ -120,70 +129,129 @@ class RobotCommander(Node):
         self.current_pose = None
         self.hellos_said = 0
         self.rings_detected = 0
+        self.bridge = CvBridge()
+        self.parking_initiated = False
 
         #self.audio_engine = pyttsx3.init()
 
         self.get_logger().info(f"Robot commander has been initialized!")
 
+    # saving the face detected and the using it for model to make a prediction
+    def save_face_callback(self, msg):
+        self.get_logger().info("Saving face image...")
+        cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+        self.current_face = cv_image
+
+    # Speech recognition function. Saves colors in sets list_of_suggested_rings_1 and list_of_suggested_rings_2 if there are any!
+    def recognize_colors(self):
+        recognizer = sr.Recognizer()
+        with sr.Microphone() as source:
+            print("Speak the sentence:")
+            recognizer.adjust_for_ambient_noise(source)
+            audio = recognizer.listen(source)
+
+        try:
+            sentence = recognizer.recognize_google(audio)
+            print("You said:", sentence)
+
+            colors = []
+            for word in sentence.split():
+                if word.lower() in ['green', 'red', 'blue', 'yellow', 'black', 'pink', 'orange', 'brown', 'purple']:  
+                    colors.append(word.lower())
+
+            print("Recognized colors:", colors)
+            if colors:
+                if not self.list_of_suggested_rings_1:
+                    self.list_of_suggested_rings_1 = set(colors)
+                else:
+                    self.list_of_suggested_rings_2 = set(colors)    
+
+        except sr.UnknownValueError:
+            print("Could not understand audio")
+        except sr.RequestError as e:
+            print("Could not request results; {0}".format(e))
+
+    # Not that much importan. Used for MODEL to detect Mona Lisa and paintings
+    def calculate_reconstruction_error(self, original, reconstructed):
+        return np.mean((original - reconstructed) ** 2, axis=-1)
+
     def breadcrumbs_callback(self, msg):
         self.latest_ring_marker_pose = msg.pose.position
         self.rings_detected += 1
 
-        if self.rings_detected == 4:
-            self.goToPose(msg.pose)
-            while not self.isTaskComplete():
-                self.info("Moving back to the point...")
-                time.sleep(1)
-            
-            while not rc.parked:
-                self.park()
-                if self.parked:
-                    break
-                rclpy.spin_once(self)
+        # if self.rings_detected == 1:
+        #     self.info("I got the coordinates of the green ring!")
+        #     self.parking_initiated = True
+        #     #goal_pose = PoseStamped()
+        #     #goal_pose.header.frame_id = "base_link"
+        #     #goal_pose.pose.position = msg.pose.position
 
-                self.parked = False
-                self.final_check_left()
-                while not self.isTaskComplete():
-                    self.info("Waiting for the task to complete...")
-                    rclpy.spin_once(self)
-                    time.sleep(1)
-                time.sleep(4.0)    
-                rclpy.spin_once(self)
-                #self.park()
-                self.parked = False
-                rclpy.spin_once(self)
-                self.final_check_right()
-                while not self.isTaskComplete():
-                    self.info("Waiting for the task to complete...")
-                    rclpy.spin_once(self)
-                    time.sleep(1)
-                time.sleep(4.0)    
-                rclpy.spin_once(self)
-                self.parked = False
-                self.final_check_left()
-                while not self.isTaskComplete():
-                    self.info("Waiting for the task to complete...")
-                    rclpy.spin_once(self)
-                    time.sleep(1)
-                time.sleep(4.0)
-                rclpy.spin_once(self)
-                self.parked = False
-                self.final_check_left()
-                while not self.isTaskComplete():
-                    self.info("Waiting for the task to complete...")
-                    rclpy.spin_once(self)
-                    time.sleep(1)
-                time.sleep(4.0)    
-                rclpy.spin_once(self)
-                self.parked = False
-                self.final_check_left()
-                while not self.isTaskComplete():
-                    self.info("Waiting for the task to complete...")
-                    rclpy.spin_once(self)
-                    time.sleep(1)
-                rclpy.spin_once(self)
+        #     goal_pose = PoseStamped()
+        #     goal_pose.header.frame_id = 'map'
+        #     # goal_pose.header.stamp = self.get_clock().now().to_msg()
+        #     goal_pose.pose.position.x = 2.45
+        #     goal_pose.pose.position.y = -1.6
+        #     # goal_pose.pose.position.z = 0.0
+        #     goal_pose.pose.orientation = self.YawToQuaternion(1.0)
+        #     self.goToPose(goal_pose)
+        #     rclpy.spin_once(self)
+        #     self.info("I got the coordinates of the green ring!")
+        #     while not self.isTaskComplete():
+        #         self.info("Moving back to the point...")
+        #         time.sleep(1)
 
-                self.get_logger().info(f"Ring detected at x: {self.latest_ring_marker_pose.x}, y: {self.latest_ring_marker_pose.y}, z: {self.latest_ring_marker_pose.z}")
+        #     rclpy.spin_once(self)
+        #     self.info("Starting to Park outside the while loop")
+        #     while not self.parked:
+        #         self.info("WStarting to Park")
+        #         self.park()
+        #         if self.parked:
+        #             break
+        #         rclpy.spin_once(self)
+
+        #         self.parked = False
+        #         self.final_check_left()
+        #         while not self.isTaskComplete():
+        #             self.info("Waiting for the task to complete...")
+        #             rclpy.spin_once(self)
+        #             time.sleep(1)
+        #         time.sleep(4.0)    
+        #         rclpy.spin_once(self)
+        #         #self.park()
+        #         self.parked = False
+        #         rclpy.spin_once(self)
+        #         self.final_check_right()
+        #         while not self.isTaskComplete():
+        #             self.info("Waiting for the task to complete...")
+        #             rclpy.spin_once(self)
+        #             time.sleep(1)
+        #         time.sleep(4.0)    
+        #         rclpy.spin_once(self)
+        #         self.parked = False
+        #         self.final_check_left()
+        #         while not self.isTaskComplete():
+        #             self.info("Waiting for the task to complete...")
+        #             rclpy.spin_once(self)
+        #             time.sleep(1)
+        #         time.sleep(4.0)
+        #         rclpy.spin_once(self)
+        #         self.parked = False
+        #         self.final_check_left()
+        #         while not self.isTaskComplete():
+        #             self.info("Waiting for the task to complete...")
+        #             rclpy.spin_once(self)
+        #             time.sleep(1)
+        #         time.sleep(4.0)    
+        #         rclpy.spin_once(self)
+        #         self.parked = False
+        #         self.final_check_left()
+        #         while not self.isTaskComplete():
+        #             self.info("Waiting for the task to complete...")
+        #             rclpy.spin_once(self)
+        #             time.sleep(1)
+        #         rclpy.spin_once(self)
+
+        #         self.get_logger().info(f"Ring detected at x: {self.latest_ring_marker_pose.x}, y: {self.latest_ring_marker_pose.y}, z: {self.latest_ring_marker_pose.z}")
 
     def greet_face(self, msg):
         #self.audio_engine.say(msg)
@@ -350,25 +418,25 @@ class RobotCommander(Node):
             else:
                 most_black_square_index = np.argmax([black_pixels_top_left, black_pixels_top_right, black_pixels_bottom_left, black_pixels_bottom_right])
                 if most_black_square_index == 0:
-                    velocity_msg.angular.z = -0.1
-                    velocity_msg.linear.x = 0.1
+                    velocity_msg.angular.z = 0.1
+                    velocity_msg.linear.x = 0.05
                     self.get_logger().info("MOVING INSIDE CIRCLE")
-                    time.sleep(1.5)
+                    time.sleep(3.0)
                 elif most_black_square_index == 1:
-                    velocity_msg.angular.z = 0.1
-                    velocity_msg.linear.x = 0.1
-                    self.get_logger().info("MOVING INSIDE CIRCLE")
-                    time.sleep(1.5)
-                elif most_black_square_index == 2:
                     velocity_msg.angular.z = -0.1
-                    velocity_msg.linear.x = 0.1
+                    velocity_msg.linear.x = 0.05
                     self.get_logger().info("MOVING INSIDE CIRCLE")
-                    time.sleep(1.5)
-                elif most_black_square_index == 3:
+                    time.sleep(3.0)
+                elif most_black_square_index == 2:
                     velocity_msg.angular.z = 0.1
-                    velocity_msg.linear.x = 0.1
+                    velocity_msg.linear.x = 0.05
                     self.get_logger().info("MOVING INSIDE CIRCLE")
-                    time.sleep(1.5)
+                    time.sleep(3.0)
+                elif most_black_square_index == 3:
+                    velocity_msg.angular.z = -0.1
+                    velocity_msg.linear.x = 0.05
+                    self.get_logger().info("MOVING INSIDE CIRCLE")
+                    time.sleep(3.0)
             if not self.parked:
                 self.vel_pub.publish(velocity_msg)
                 self.debug('Parking the robot...')
@@ -381,7 +449,7 @@ class RobotCommander(Node):
     def final_check_left(self):
         rclpy.spin_once(self)
         vel_msg = Twist()
-        vel_msg.angular.z = -4.5
+        vel_msg.angular.z = 4.5
         self.vel_pub.publish(vel_msg)
         time.sleep(4.0)
         rclpy.spin_once(self)
@@ -392,7 +460,7 @@ class RobotCommander(Node):
     def final_check_right(self):
         rclpy.spin_once(self)
         vel_msg = Twist()
-        vel_msg.angular.z = -4.0
+        vel_msg.angular.z = 4.0
         self.vel_pub.publish(vel_msg)
         time.sleep(4.0)
         rclpy.spin_once(self)
@@ -421,6 +489,7 @@ class RobotCommander(Node):
         goal_msg.pose = pose
         goal_msg.behavior_tree = behavior_tree
 
+        #self.info("What the fuck")
         self.info('Navigating to goal: ' + str(pose.pose.position.x) + ' ' +
                   str(pose.pose.position.y) + '...')
         send_goal_future = self.nav_to_pose_client.send_goal_async(goal_msg,
@@ -428,11 +497,13 @@ class RobotCommander(Node):
         rclpy.spin_until_future_complete(self, send_goal_future)
         self.goal_handle = send_goal_future.result()
 
+        self.info("What the fuck")
         if not self.goal_handle.accepted:
             self.error('Goal to ' + str(pose.pose.position.x) + ' ' +
                        str(pose.pose.position.y) + ' was rejected!')
             return False
 
+        self.info("What the fuck")
         self.result_future = self.goal_handle.get_result_async()
         return True
 
@@ -618,7 +689,7 @@ class RobotCommander(Node):
         return
     
     def check_ring(self, marked_rings, point):
-        self.get_logger().info(f"IM LOOKING FOR RINGS")
+        # self.get_logger().info(f"IM LOOKING FOR RINGS")
         coord_ring_relative_to_r = self.latest_ring_marker_pose
         if coord_ring_relative_to_r is not None:
             coord_ring = PoseStamped()
@@ -635,6 +706,9 @@ class RobotCommander(Node):
             z1 = coord_ring_relative_to_r.z
             coord_ring.pose.position.x = x
             coord_ring.pose.position.y = y
+
+            if math.isinf(z):
+                z = 0.0
             coord_ring.pose.orientation = self.YawToQuaternion(z)
             
             if len(marked_rings) != 0:
@@ -663,11 +737,11 @@ class RobotCommander(Node):
             ## fix maybe
             goal_pose.pose.orientation = self.YawToQuaternion(point[2])
 
-            self.goToPose(goal_pose)
+            """self.goToPose(goal_pose)
             while not self.isTaskComplete():
                 self.info("Moving back to the point...")
                 time.sleep(1)
-            time.sleep(1)
+            time.sleep(1)"""
             
             return True, marked_rings
         else:
@@ -751,14 +825,18 @@ class RobotCommander(Node):
                 self.spin(spin_dist)
                 n += 1
                 while not self.isTaskComplete():
-                    self.info("Waiting for the task to complete...")
+                    # self.info("Waiting for the task to complete...")
                     if(self.latest_people_marker_pose is not None):
                         time.sleep(3)
-                        self.greet_face("Hi there")
-                        self.get_logger().info(f"{self.hellos_said}")
-                        self.hellos_said += 1
-                        self.get_logger().info(f"Hello there!")
-                        time.sleep(3)
+                        #self.greet_face("Hi there")
+                        #self.get_logger().info(f"{self.hellos_said}")
+                        #self.hellos_said += 1
+                        #self.get_logger().info(f"Hello there!")
+
+                        # NOTE: when we aproach the face we should say colors of rings. I think this should be done very faast but we can change that easy.
+                        #       For now leave it as it is. We can change it later.
+                        self.recognize_colors()
+                        time.sleep(5)
                         n = 10
                         break
                     # self.check_approach(marked_poses, rc.current_pose)
@@ -810,9 +888,124 @@ def main(args=None):
     # [0.63,-0.76,0.458],[1.5,-0.4,-0.069]   9 and 10 possitions!!!
 
     marked_rings = []
+    marked_poses = []
     i = 0
-    while len(points) > i or rc.rings_detected <= 3:
+    while len(points) > i:
         try:
+            # NOTE: This part has to change. We should run it inly after we visit every point.
+            #       Afer we visit every point then we park.
+            #       Then we check for cylinder.
+            #       Then we go to real Mona Lisa.
+            if rc.ring_to_visit:
+                goal_pose = PoseStamped()
+                goal_pose.header.frame_id = 'map'
+                # goal_pose.header.stamp = self.get_clock().now().to_msg()
+                goal_pose.pose.position.x = 2.45
+                goal_pose.pose.position.y = -1.6
+                # goal_pose.pose.position.z = 0.0
+                goal_pose.pose.orientation = rc.YawToQuaternion(-1.0)
+                rc.goToPose(goal_pose)
+
+                while not rc.isTaskComplete():
+                    rc.info("Moving to the green ring.")
+                    time.sleep(1)
+
+
+                rclpy.spin_once(rc)
+                rc.info("Starting to Park outside the while loop")
+                while not rc.parked:
+                    rc.info("WStarting to Park")
+                    rc.park()
+                    if rc.parked:
+                        break
+                    rclpy.spin_once(rc)
+
+                rc.parked = False
+                rc.final_check_left()
+                while not rc.isTaskComplete():
+                    rc.info("Waiting for the task to complete...")
+                    rclpy.spin_once(rc)
+                    time.sleep(1)
+                time.sleep(4.0)    
+                rclpy.spin_once(rc)
+                #rc.park()
+                rc.parked = False
+                #rclpy.spin_once(rc)
+
+
+                # This is still not checked if it works. Old code is below it!
+                for i in range(10):
+                    rc.final_check_left()
+                    while not rc.isTaskComplete():
+                        rc.info("Waiting for the task to complete...")
+                        rclpy.spin_once(rc)
+                        time.sleep(1)
+                    time.sleep(2.0)
+                    #rclpy.spin_once(rc)
+                    rc.parked = False    
+                """rc.final_check_right()
+                while not rc.isTaskComplete():
+                    rc.info("Waiting for the task to complete...")
+                    rclpy.spin_once(rc)
+                    time.sleep(1)
+                time.sleep(2.0)    
+                #rclpy.spin_once(rc)
+                rc.parked = False
+                rc.final_check_left()
+                while not rc.isTaskComplete():
+                    rc.info("Waiting for the task to complete...")
+                    rclpy.spin_once(rc)
+                    time.sleep(1)
+                time.sleep(2.0)
+                #rclpy.spin_once(rc)
+                rc.parked = False
+                rc.final_check_left()
+                while not rc.isTaskComplete():
+                    rc.info("Waiting for the task to complete...")
+                    rclpy.spin_once(rc)
+                    time.sleep(1)
+                time.sleep(2.0)    
+                #rclpy.spin_once(rc)
+                rc.parked = False
+                rc.final_check_left()
+                while not rc.isTaskComplete():
+                    rc.info("Waiting for the task to complete...")
+                    rclpy.spin_once(rc)
+                    time.sleep(1)
+                #rclpy.spin_once(rc)
+                rc.final_check_right()
+                while not rc.isTaskComplete():
+                    rc.info("Waiting for the task to complete...")
+                    rclpy.spin_once(rc)
+                    time.sleep(1)
+                time.sleep(2.0)    
+                #rclpy.spin_once(rc)
+                rc.parked = False
+                rc.final_check_left()
+                while not rc.isTaskComplete():
+                    rc.info("Waiting for the task to complete...")
+                    rclpy.spin_once(rc)
+                    time.sleep(1)
+                time.sleep(2.0)
+                #rclpy.spin_once(rc)
+                rc.parked = False
+                rc.final_check_left()
+                while not rc.isTaskComplete():
+                    rc.info("Waiting for the task to complete...")
+                    rclpy.spin_once(rc)
+                    time.sleep(1)
+                time.sleep(2.0)    
+                #rclpy.spin_once(rc)
+                rc.parked = False
+                rc.final_check_left()
+                while not rc.isTaskComplete():
+                    rc.info("Waiting for the task to complete...")
+                    rclpy.spin_once(rc)
+                    time.sleep(1)
+                #rclpy.spin_once(rc)"""
+
+                rc.destroyNode()
+
             point = points[i]
             # If no new 'people_marker' pose, proceed with the next point in the list
             goal_pose = PoseStamped()
@@ -823,34 +1016,68 @@ def main(args=None):
             goal_pose.pose.orientation = rc.YawToQuaternion(point[2])
 
             rc.goToPose(goal_pose)
+            rc.info("Doing stuff in the main")
 
             while not rc.isTaskComplete():
-                rc.info("Waiting for the task to complete...")
+                rc.info("doing stuff in the main wating loop")
                 time.sleep(1)
 
+
+            # Here I put both ring detection and face approach in the same while loop.
+            # This way we only have to do everything onece.
+            # Also removed stoping logic and destroying the node since we are not stoping the robot at all.
             rc.latest_ring_marker_pose = None
+            rc.latest_people_marker_pose = None
             spin_dist = 0.5 * math.pi
             n = 0
             while n < 4:
                 rc.spin(spin_dist)
                 n+=1
                 while not rc.isTaskComplete():
-                    rc.info("Waiting for the task to complete...")
+                    rc.info("Doing stuff in the spinning main while")
                     rc.get_logger().info(f"curr pose x: {rc.current_pose.pose.position.x} y: {rc.current_pose.pose.position.y} z: {rc.current_pose.pose.orientation.z}")
                     approached_ring, marked_rings = rc.check_ring(marked_rings, point)
-                    if(len(marked_rings) >= 3):
+
+                    # Loading model and checking if we need to approach the face
+                    model = tf.keras.models.load_model('anoamly_detection_model.h5')
+
+                    # Here, we transform the face image to the same size as the model was trained on
+                    img = cv2.resize(rc.current_image, (224, 224))
+                    img = img.astype('float32') / 255  
+                    img = np.expand_dims(img, axis=0)
+
+                    reconstructed_img = model.predict(img)[0]
+
+                    error_map = rc.calculate_reconstruction_error(img[0], reconstructed_img)
+                    mean_error = np.mean(error_map)
+
+                    # Changing the threshold value will change the sensitivity of the anomaly detection
+                    # 0.1 is used for detecting if face is painting of Mona Lisa or normal face
+                    # For detecting anomlies in the face, the threshold should be lower-->I think the best is 0.01 (we will check later on)
+                    threshold = 0.1
+
+                    if mean_error < threshold:
+                        approached_face, marked_poses = rc.check_approach(marked_poses, point)
+                    else:
+                        continue    
+
+                    # This is not needed since we are not stoping the robot at all even if he greets all faces!
+                    """if(len(marked_rings) >= 3):
                         time.sleep(2)
-                        rc.info("I have greeted 3 people, I am done!")
+                        # rc.info("I have greeted 3 people, I am done!")
                         #rc.greet_face("I am done with this shit")
-                        rc.destroyNode()
-                        break
-                    if approached_ring:
+                        # rc.destroyNode()
+                        break"""
+                    if approached_ring or approached_face:
                         n = 0
                     # rc.check_approach(marked_poses, rc.current_pose)
                     time.sleep(1)
             i+=1
         except IndexError:
             print(f"Error: Attempted to access index {i} in points list, which has {len(points)} elements.")
+            break
+
+            
 
     # TASK 1
     # marked_poses = []
