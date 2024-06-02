@@ -142,9 +142,12 @@ class RobotCommander(Node):
         cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         self.current_face = cv_image
 
+        #cv2.imshow("Detected Face", cv_image)
+        #cv2.waitKey(1)
+
     # Speech recognition function. Saves colors in sets list_of_suggested_rings_1 and list_of_suggested_rings_2 if there are any!
     def recognize_colors(self):
-        recognizer = sr.Recognizer()
+        """recognizer = sr.Recognizer()
         with sr.Microphone() as source:
             print("Speak the sentence:")
             recognizer.adjust_for_ambient_noise(source)
@@ -169,7 +172,26 @@ class RobotCommander(Node):
         except sr.UnknownValueError:
             print("Could not understand audio")
         except sr.RequestError as e:
-            print("Could not request results; {0}".format(e))
+            print("Could not request results; {0}".format(e))"""
+        try:
+            sentence = input("Type the sentence: ")
+            print("You typed:", sentence)
+
+            colors = []
+            for word in sentence.split():
+                if word.lower() in ['green', 'red', 'blue', 'yellow', 'black', 'pink', 'orange', 'brown', 'purple']:  
+                    colors.append(word.lower())
+
+            print("Recognized colors:", colors)
+            if colors:
+                if not self.list_of_suggested_rings_1:
+                    self.list_of_suggested_rings_1 = set(colors)
+                else:
+                    self.list_of_suggested_rings_2 = set(colors)    
+
+        except Exception as e:
+            print("An error occurred: {0}".format(e))
+
 
     # Not that much importan. Used for MODEL to detect Mona Lisa and paintings
     def calculate_reconstruction_error(self, original, reconstructed):
@@ -178,80 +200,6 @@ class RobotCommander(Node):
     def breadcrumbs_callback(self, msg):
         self.latest_ring_marker_pose = msg.pose.position
         self.rings_detected += 1
-
-        # if self.rings_detected == 1:
-        #     self.info("I got the coordinates of the green ring!")
-        #     self.parking_initiated = True
-        #     #goal_pose = PoseStamped()
-        #     #goal_pose.header.frame_id = "base_link"
-        #     #goal_pose.pose.position = msg.pose.position
-
-        #     goal_pose = PoseStamped()
-        #     goal_pose.header.frame_id = 'map'
-        #     # goal_pose.header.stamp = self.get_clock().now().to_msg()
-        #     goal_pose.pose.position.x = 2.45
-        #     goal_pose.pose.position.y = -1.6
-        #     # goal_pose.pose.position.z = 0.0
-        #     goal_pose.pose.orientation = self.YawToQuaternion(1.0)
-        #     self.goToPose(goal_pose)
-        #     rclpy.spin_once(self)
-        #     self.info("I got the coordinates of the green ring!")
-        #     while not self.isTaskComplete():
-        #         self.info("Moving back to the point...")
-        #         time.sleep(1)
-
-        #     rclpy.spin_once(self)
-        #     self.info("Starting to Park outside the while loop")
-        #     while not self.parked:
-        #         self.info("WStarting to Park")
-        #         self.park()
-        #         if self.parked:
-        #             break
-        #         rclpy.spin_once(self)
-
-        #         self.parked = False
-        #         self.final_check_left()
-        #         while not self.isTaskComplete():
-        #             self.info("Waiting for the task to complete...")
-        #             rclpy.spin_once(self)
-        #             time.sleep(1)
-        #         time.sleep(4.0)    
-        #         rclpy.spin_once(self)
-        #         #self.park()
-        #         self.parked = False
-        #         rclpy.spin_once(self)
-        #         self.final_check_right()
-        #         while not self.isTaskComplete():
-        #             self.info("Waiting for the task to complete...")
-        #             rclpy.spin_once(self)
-        #             time.sleep(1)
-        #         time.sleep(4.0)    
-        #         rclpy.spin_once(self)
-        #         self.parked = False
-        #         self.final_check_left()
-        #         while not self.isTaskComplete():
-        #             self.info("Waiting for the task to complete...")
-        #             rclpy.spin_once(self)
-        #             time.sleep(1)
-        #         time.sleep(4.0)
-        #         rclpy.spin_once(self)
-        #         self.parked = False
-        #         self.final_check_left()
-        #         while not self.isTaskComplete():
-        #             self.info("Waiting for the task to complete...")
-        #             rclpy.spin_once(self)
-        #             time.sleep(1)
-        #         time.sleep(4.0)    
-        #         rclpy.spin_once(self)
-        #         self.parked = False
-        #         self.final_check_left()
-        #         while not self.isTaskComplete():
-        #             self.info("Waiting for the task to complete...")
-        #             rclpy.spin_once(self)
-        #             time.sleep(1)
-        #         rclpy.spin_once(self)
-
-        #         self.get_logger().info(f"Ring detected at x: {self.latest_ring_marker_pose.x}, y: {self.latest_ring_marker_pose.y}, z: {self.latest_ring_marker_pose.z}")
 
     def greet_face(self, msg):
         #self.audio_engine.say(msg)
@@ -497,13 +445,11 @@ class RobotCommander(Node):
         rclpy.spin_until_future_complete(self, send_goal_future)
         self.goal_handle = send_goal_future.result()
 
-        self.info("What the fuck")
         if not self.goal_handle.accepted:
             self.error('Goal to ' + str(pose.pose.position.x) + ' ' +
                        str(pose.pose.position.y) + ' was rejected!')
             return False
 
-        self.info("What the fuck")
         self.result_future = self.goal_handle.get_result_async()
         return True
 
@@ -699,7 +645,7 @@ class RobotCommander(Node):
             x = point[0] + coord_ring_relative_to_r.x
             y = point[1] + coord_ring_relative_to_r.y
             z = coord_ring_relative_to_r.z + point[2]
-            self.get_logger().info(f"----------------------------> {z}")
+            #self.get_logger().info(f"----------------------------> {z}")
 
             x1 = coord_ring_relative_to_r.x
             y1 = coord_ring_relative_to_r.y
@@ -759,7 +705,7 @@ class RobotCommander(Node):
             x = point[0] + coord_face_relative_to_r.x
             y = point[1] + coord_face_relative_to_r.y
             z = coord_face_relative_to_r.z + point[2]
-            self.get_logger().info(f"----------------------------> {z}")
+            #self.get_logger().info(f"----------------------------> {z}")
 
             x1 = coord_face_relative_to_r.x
             y1 = coord_face_relative_to_r.y
@@ -889,14 +835,16 @@ def main(args=None):
 
     marked_rings = []
     marked_poses = []
+    model = tf.keras.models.load_model('/home/kappa/Desktop/task2_robot-main/src/dis_tutorial3/scripts/anomaly_detection_model.h5')
+    approached_face = None
     i = 0
     while len(points) > i:
         try:
-            # NOTE: This part has to change. We should run it inly after we visit every point.
+            # NOTE: This part has to change. We should run it only after we visit every point.
             #       Afer we visit every point then we park.
             #       Then we check for cylinder.
             #       Then we go to real Mona Lisa.
-            if rc.ring_to_visit:
+            if rc.list_of_suggested_rings_1 and rc.list_of_suggested_rings_2:
                 goal_pose = PoseStamped()
                 goal_pose.header.frame_id = 'map'
                 # goal_pose.header.stamp = self.get_clock().now().to_msg()
@@ -914,7 +862,7 @@ def main(args=None):
                 rclpy.spin_once(rc)
                 rc.info("Starting to Park outside the while loop")
                 while not rc.parked:
-                    rc.info("WStarting to Park")
+                    rc.info("Starting to Park")
                     rc.park()
                     if rc.parked:
                         break
@@ -943,68 +891,12 @@ def main(args=None):
                     time.sleep(2.0)
                     #rclpy.spin_once(rc)
                     rc.parked = False    
-                """rc.final_check_right()
-                while not rc.isTaskComplete():
-                    rc.info("Waiting for the task to complete...")
-                    rclpy.spin_once(rc)
-                    time.sleep(1)
-                time.sleep(2.0)    
-                #rclpy.spin_once(rc)
-                rc.parked = False
-                rc.final_check_left()
-                while not rc.isTaskComplete():
-                    rc.info("Waiting for the task to complete...")
-                    rclpy.spin_once(rc)
-                    time.sleep(1)
-                time.sleep(2.0)
-                #rclpy.spin_once(rc)
-                rc.parked = False
-                rc.final_check_left()
-                while not rc.isTaskComplete():
-                    rc.info("Waiting for the task to complete...")
-                    rclpy.spin_once(rc)
-                    time.sleep(1)
-                time.sleep(2.0)    
-                #rclpy.spin_once(rc)
-                rc.parked = False
-                rc.final_check_left()
-                while not rc.isTaskComplete():
-                    rc.info("Waiting for the task to complete...")
-                    rclpy.spin_once(rc)
-                    time.sleep(1)
-                #rclpy.spin_once(rc)
-                rc.final_check_right()
-                while not rc.isTaskComplete():
-                    rc.info("Waiting for the task to complete...")
-                    rclpy.spin_once(rc)
-                    time.sleep(1)
-                time.sleep(2.0)    
-                #rclpy.spin_once(rc)
-                rc.parked = False
-                rc.final_check_left()
-                while not rc.isTaskComplete():
-                    rc.info("Waiting for the task to complete...")
-                    rclpy.spin_once(rc)
-                    time.sleep(1)
-                time.sleep(2.0)
-                #rclpy.spin_once(rc)
-                rc.parked = False
-                rc.final_check_left()
-                while not rc.isTaskComplete():
-                    rc.info("Waiting for the task to complete...")
-                    rclpy.spin_once(rc)
-                    time.sleep(1)
-                time.sleep(2.0)    
-                #rclpy.spin_once(rc)
-                rc.parked = False
-                rc.final_check_left()
-                while not rc.isTaskComplete():
-                    rc.info("Waiting for the task to complete...")
-                    rclpy.spin_once(rc)
-                    time.sleep(1)
-                #rclpy.spin_once(rc)"""
-
-                rc.destroyNode()
+                # This should break out of whole loop. 
+                # After this we should look around to detect cylinder. 
+                # After that publish to arm_controller and move arm to read QR Code on top of cylinder.
+                # With taht we teach model to detect real Mona Lisa. 
+                # Use that model and go around map and find it!
+                break
 
             point = points[i]
             # If no new 'people_marker' pose, proceed with the next point in the list
@@ -1039,26 +931,36 @@ def main(args=None):
                     approached_ring, marked_rings = rc.check_ring(marked_rings, point)
 
                     # Loading model and checking if we need to approach the face
-                    model = tf.keras.models.load_model('anoamly_detection_model.h5')
-
-                    # Here, we transform the face image to the same size as the model was trained on
-                    img = cv2.resize(rc.current_image, (224, 224))
-                    img = img.astype('float32') / 255  
-                    img = np.expand_dims(img, axis=0)
-
-                    reconstructed_img = model.predict(img)[0]
-
-                    error_map = rc.calculate_reconstruction_error(img[0], reconstructed_img)
-                    mean_error = np.mean(error_map)
-
-                    # Changing the threshold value will change the sensitivity of the anomaly detection
-                    # 0.1 is used for detecting if face is painting of Mona Lisa or normal face
-                    # For detecting anomlies in the face, the threshold should be lower-->I think the best is 0.01 (we will check later on)
+                    error_map = None
+                    mean_error = None
                     threshold = 0.1
+                    img = None
+                    # Here, we transform the face image to the same size as the model was trained on
+                    if rc.current_face is not None and rc.current_face.size > 0:
+                        rc.info("RESIZING IMG")
+                        img = cv2.resize(rc.current_face, (224, 224))
+                        img = img.astype('float32') / 255  
+                        img = np.expand_dims(img, axis=0)
 
-                    if mean_error < threshold:
+                        reconstructed_img = model.predict(img)[0]
+
+                        error_map = rc.calculate_reconstruction_error(img[0], reconstructed_img)
+                        mean_error = np.mean(error_map)
+
+                        # Changing the threshold value will change the sensitivity of the anomaly detection
+                        # 0.1 is used for detecting if face is painting of Mona Lisa or normal face
+                        # For detecting anomlies in the face, the threshold should be lower-->I think the best is 0.01 (we will check later on)
+                    threshold = 0.2
+                    rc.info("MODEL EVALUATING IMG")
+                    if mean_error and mean_error < threshold:
+                        rc.info("MODEL APROVED!")
                         approached_face, marked_poses = rc.check_approach(marked_poses, point)
+                        cv2.imshow("Detected Face", rc.current_face)
+                        cv2.waitKey(1)
+                        rc.current_face = None
                     else:
+                        rc.info("MODEL DID NOT APROVEEE THIS IMG")
+                        rc.current_face = None
                         continue    
 
                     # This is not needed since we are not stoping the robot at all even if he greets all faces!
@@ -1077,48 +979,6 @@ def main(args=None):
             print(f"Error: Attempted to access index {i} in points list, which has {len(points)} elements.")
             break
 
-            
-
-    # TASK 1
-    # marked_poses = []
-    # i = 0
-    # while len(points) > i or rc.hellos_said <= 3:
-    #     point = points[i]
-    #     # If no new 'people_marker' pose, proceed with the next point in the list
-    #     goal_pose = PoseStamped()
-    #     goal_pose.header.frame_id = 'map'
-    #     goal_pose.header.stamp = rc.get_clock().now().to_msg()
-    #     goal_pose.pose.position.x = point[0]
-    #     goal_pose.pose.position.y = point[1]
-    #     goal_pose.pose.orientation = rc.YawToQuaternion(point[2])
-
-    #     rc.goToPose(goal_pose)
-
-    #     while not rc.isTaskComplete():
-    #         rc.info("Waiting for the task to complete...")
-    #         time.sleep(1)
-
-    #     rc.latest_people_marker_pose = None
-    #     spin_dist = 0.5 * math.pi
-    #     n = 0
-    #     while n < 4:
-    #         rc.spin(spin_dist)
-    #         n+=1
-    #         while not rc.isTaskComplete():
-    #             rc.info("Waiting for the task to complete...")
-    #             rc.get_logger().info(f"curr pose x: {rc.current_pose.pose.position.x} y: {rc.current_pose.pose.position.y} z: {rc.current_pose.pose.orientation.z}")
-    #             approached_face, marked_poses = rc.check_approach(marked_poses, point)
-    #             if(rc.hellos_said >= 3):
-    #                 time.sleep(2)
-    #                 rc.info("I have greeted 3 people, I am done!")
-    #                 rc.greet_face("I am done with this shit")
-    #                 rc.destroyNode()
-    #                 break
-    #             if approached_face:
-    #                 n = 0
-    #             # rc.check_approach(marked_poses, rc.current_pose)
-    #             time.sleep(1)
-    #     i+=1
     rc.destroyNode()
     # And a simple example
 if __name__=="__main__":
