@@ -49,6 +49,9 @@ class detect_faces(Node):
 
 		self.get_logger().info(f"Node has been initialized! Will publish face markers to {marker_topic}.")
 
+	def calculate_reconstruction_error(self, original, reconstructed):
+        return np.mean((original - reconstructed) ** 2, axis=-1)
+
 	def rgb_callback(self, data):
 
 		self.faces = []
@@ -87,6 +90,15 @@ class detect_faces(Node):
 				# Convert ROI to a ROS Image message
 				roi_msg = self.bridge.cv2_to_imgmsg(roi, "bgr8")
 
+				#rc.info("RESIZING IMG")
+				#img = cv2.resize(roi_msg, (224, 224))
+				#img = img.astype('float32') / 255  
+				#img = np.expand_dims(img, axis=0)
+
+				#reconstructed_img = model.predict(img)[0]
+
+				#error_map = rc.calculate_reconstruction_error(img[0], reconstructed_img)
+				#mean_error = np.mean(error_map)
 				# Publish the ROI as an image message
 				self.face_img_pub.publish(roi_msg)
 
@@ -95,6 +107,8 @@ class detect_faces(Node):
 
 				# draw the center of bounding box
 				cv_image = cv2.circle(cv_image, (cx,cy), 5, self.detection_color, -1)
+
+
 
 				self.faces.append((cx,cy))
 
