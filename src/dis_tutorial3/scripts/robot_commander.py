@@ -29,6 +29,8 @@ from turtle_tf2_py.turtle_tf2_broadcaster import quaternion_from_euler
 from visualization_msgs.msg import Marker
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image
+from std_msgs.msg import String
+import cv2
 
 from irobot_create_msgs.action import Dock, Undock
 from irobot_create_msgs.msg import DockStatus
@@ -79,6 +81,7 @@ class RobotCommander(Node):
         self.status = None
         self.initial_pose_received = False
         self.is_docked = None
+        self.rings_found = []
 
         self.camera_image = None
         self.processing_position = False
@@ -111,9 +114,15 @@ class RobotCommander(Node):
 
         self.ring_sub = self.create_subscription(Marker, "/breadcrumbs", self.breadcrumbs_callback, QoSReliabilityPolicy.BEST_EFFORT)
 
+        self.qr_detect_sub = self.create_subscription(String, '/qr_info', self.qr_callback, 10)
+        self.ring_color_sub = self.create_subscription(String, "/ring_color", self.ring_color_callback, 10)
+
         self.vel_pub = self.create_publisher(Twist,
                                              '/cmd_vel_nav',
                                              10)
+        
+        # Arm Publisher
+        self.arm_pub = self.create_publisher(String, '/arm_command', 10)
 
         # ROS2 publishers
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
@@ -198,8 +207,19 @@ class RobotCommander(Node):
         return np.mean((original - reconstructed) ** 2, axis=-1)
 
     def breadcrumbs_callback(self, msg):
-        self.latest_ring_marker_pose = msg.pose.position
+        self.rings_found.append(msg.pose.position, "COLOR")
         self.rings_detected += 1
+
+    def qr_callback(self, msg):
+        self.get_logger().info(f"QR code detected: {msg}")
+    #   self.get_logger().info("Looking for QR code")
+    #   self.arm_pub.publish("look_for_qr")
+    #   time.sleep(5)
+
+    def ring_color_callback(self, msg):
+        for ring in self.rings_found:
+                if ring[1] == "COLOR":
+                    ring[1] = msg.data
 
     def greet_face(self, msg):
         #self.audio_engine.say(msg)
@@ -214,9 +234,15 @@ class RobotCommander(Node):
             #So i am not sure how this works (cannot check)
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
             self.camera_image = cv_image
+
+            qr_detector = cv2.QRCodeDetector()
+            val, _, _ = qr_detector.detectAndDecode(cv_image)
+            print(val)
+
         except CvBridgeError as e:
             self.get_logger().error(f"Error converting image: {e}")
         return
+    
 
     def park(self):
         self.get_logger().info("PARKINGGGGGGGGGGGGGGGG")
@@ -445,11 +471,13 @@ class RobotCommander(Node):
         rclpy.spin_until_future_complete(self, send_goal_future)
         self.goal_handle = send_goal_future.result()
 
+        self.info("What the fuck")
         if not self.goal_handle.accepted:
             self.error('Goal to ' + str(pose.pose.position.x) + ' ' +
                        str(pose.pose.position.y) + ' was rejected!')
             return False
 
+        self.info("What the fuck")
         self.result_future = self.goal_handle.get_result_async()
         return True
 
@@ -655,6 +683,7 @@ class RobotCommander(Node):
 
             if math.isinf(z):
                 z = 0.0
+
             coord_ring.pose.orientation = self.YawToQuaternion(z)
             
             if len(marked_rings) != 0:
@@ -683,12 +712,6 @@ class RobotCommander(Node):
             ## fix maybe
             goal_pose.pose.orientation = self.YawToQuaternion(point[2])
 
-            """self.goToPose(goal_pose)
-            while not self.isTaskComplete():
-                self.info("Moving back to the point...")
-                time.sleep(1)
-            time.sleep(1)"""
-            
             return True, marked_rings
         else:
             return False, marked_rings
@@ -771,7 +794,7 @@ class RobotCommander(Node):
                 self.spin(spin_dist)
                 n += 1
                 while not self.isTaskComplete():
-                    # self.info("Waiting for the task to complete...")
+                   
                     if(self.latest_people_marker_pose is not None):
                         time.sleep(3)
                         #self.greet_face("Hi there")
@@ -833,6 +856,8 @@ def main(args=None):
     # [2.23,-1.78,-1] --> 11
     # [0.63,-0.76,0.458],[1.5,-0.4,-0.069]   9 and 10 possitions!!!
 
+    rc.arm_pub.publish("look_for_qr")
+    time.sleep(2)
     marked_rings = []
     marked_poses = []
     model = tf.keras.models.load_model('/home/kappa/Desktop/task2_robot-main/src/dis_tutorial3/scripts/anomaly_detection_model.h5')
@@ -908,10 +933,8 @@ def main(args=None):
             goal_pose.pose.orientation = rc.YawToQuaternion(point[2])
 
             rc.goToPose(goal_pose)
-            rc.info("Doing stuff in the main")
 
             while not rc.isTaskComplete():
-                rc.info("doing stuff in the main wating loop")
                 time.sleep(1)
 
 
@@ -926,7 +949,7 @@ def main(args=None):
                 rc.spin(spin_dist)
                 n+=1
                 while not rc.isTaskComplete():
-                    rc.info("Doing stuff in the spinning main while")
+
                     rc.get_logger().info(f"curr pose x: {rc.current_pose.pose.position.x} y: {rc.current_pose.pose.position.y} z: {rc.current_pose.pose.orientation.z}")
                     approached_ring, marked_rings = rc.check_ring(marked_rings, point)
 
@@ -964,12 +987,7 @@ def main(args=None):
                         continue    
 
                     # This is not needed since we are not stoping the robot at all even if he greets all faces!
-                    """if(len(marked_rings) >= 3):
-                        time.sleep(2)
-                        # rc.info("I have greeted 3 people, I am done!")
-                        #rc.greet_face("I am done with this shit")
-                        # rc.destroyNode()
-                        break"""
+                    
                     if approached_ring or approached_face:
                         n = 0
                     # rc.check_approach(marked_poses, rc.current_pose)

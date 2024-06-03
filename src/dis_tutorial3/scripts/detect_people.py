@@ -50,7 +50,7 @@ class detect_faces(Node):
 		self.get_logger().info(f"Node has been initialized! Will publish face markers to {marker_topic}.")
 
 	def calculate_reconstruction_error(self, original, reconstructed):
-        return np.mean((original - reconstructed) ** 2, axis=-1)
+    	return np.mean((original - reconstructed) ** 2, axis=-1)
 
 	def rgb_callback(self, data):
 
@@ -59,7 +59,6 @@ class detect_faces(Node):
 		try:
 			cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
 
-			# self.get_logger().info(f"Running inference on image...")
 
 			# run inference
 			res = self.model.predict(cv_image, imgsz=(256, 320), show=False, verbose=False, classes=[0], device=self.device, conf=0.7)
@@ -79,7 +78,6 @@ class detect_faces(Node):
 
 				cx = int((bbox[0]+bbox[2])/2)
 				cy = int((bbox[1]+bbox[3])/2)
-
 
 				# Extract the region of interest (ROI) containing the detected face
 				# I need this so I can publish the face as an image message to robot_commander and use it in model
