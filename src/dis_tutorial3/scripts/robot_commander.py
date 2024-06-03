@@ -28,6 +28,8 @@ from turtle_tf2_py.turtle_tf2_broadcaster import quaternion_from_euler
 from visualization_msgs.msg import Marker
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image
+from std_msgs.msg import String
+import cv2
 
 from irobot_create_msgs.action import Dock, Undock
 from irobot_create_msgs.msg import DockStatus
@@ -102,9 +104,14 @@ class RobotCommander(Node):
 
         self.ring_sub = self.create_subscription(Marker, "/breadcrumbs", self.breadcrumbs_callback, QoSReliabilityPolicy.BEST_EFFORT)
 
+        self.qr_detect_sub = self.create_subscription(String, '/qr_info', self.qr_callback, 10)
+
         self.vel_pub = self.create_publisher(Twist,
                                              '/cmd_vel_nav',
                                              10)
+        
+        # Arm Publisher
+        self.arm_pub = self.create_publisher(String, '/arm_command', 10)
 
         # ROS2 publishers
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
@@ -131,79 +138,12 @@ class RobotCommander(Node):
         self.latest_ring_marker_pose = msg.pose.position
         self.rings_detected += 1
 
-        # if self.rings_detected == 1:
-        #     self.info("I got the coordinates of the green ring!")
-        #     self.parking_initiated = True
-        #     #goal_pose = PoseStamped()
-        #     #goal_pose.header.frame_id = "base_link"
-        #     #goal_pose.pose.position = msg.pose.position
-
-        #     goal_pose = PoseStamped()
-        #     goal_pose.header.frame_id = 'map'
-        #     # goal_pose.header.stamp = self.get_clock().now().to_msg()
-        #     goal_pose.pose.position.x = 2.45
-        #     goal_pose.pose.position.y = -1.6
-        #     # goal_pose.pose.position.z = 0.0
-        #     goal_pose.pose.orientation = self.YawToQuaternion(1.0)
-        #     self.goToPose(goal_pose)
-        #     rclpy.spin_once(self)
-        #     self.info("I got the coordinates of the green ring!")
-        #     while not self.isTaskComplete():
-        #         self.info("Moving back to the point...")
-        #         time.sleep(1)
-
-        #     rclpy.spin_once(self)
-        #     self.info("Starting to Park outside the while loop")
-        #     while not self.parked:
-        #         self.info("WStarting to Park")
-        #         self.park()
-        #         if self.parked:
-        #             break
-        #         rclpy.spin_once(self)
-
-        #         self.parked = False
-        #         self.final_check_left()
-        #         while not self.isTaskComplete():
-        #             self.info("Waiting for the task to complete...")
-        #             rclpy.spin_once(self)
-        #             time.sleep(1)
-        #         time.sleep(4.0)    
-        #         rclpy.spin_once(self)
-        #         #self.park()
-        #         self.parked = False
-        #         rclpy.spin_once(self)
-        #         self.final_check_right()
-        #         while not self.isTaskComplete():
-        #             self.info("Waiting for the task to complete...")
-        #             rclpy.spin_once(self)
-        #             time.sleep(1)
-        #         time.sleep(4.0)    
-        #         rclpy.spin_once(self)
-        #         self.parked = False
-        #         self.final_check_left()
-        #         while not self.isTaskComplete():
-        #             self.info("Waiting for the task to complete...")
-        #             rclpy.spin_once(self)
-        #             time.sleep(1)
-        #         time.sleep(4.0)
-        #         rclpy.spin_once(self)
-        #         self.parked = False
-        #         self.final_check_left()
-        #         while not self.isTaskComplete():
-        #             self.info("Waiting for the task to complete...")
-        #             rclpy.spin_once(self)
-        #             time.sleep(1)
-        #         time.sleep(4.0)    
-        #         rclpy.spin_once(self)
-        #         self.parked = False
-        #         self.final_check_left()
-        #         while not self.isTaskComplete():
-        #             self.info("Waiting for the task to complete...")
-        #             rclpy.spin_once(self)
-        #             time.sleep(1)
-        #         rclpy.spin_once(self)
-
-        #         self.get_logger().info(f"Ring detected at x: {self.latest_ring_marker_pose.x}, y: {self.latest_ring_marker_pose.y}, z: {self.latest_ring_marker_pose.z}")
+    def qr_callback(self, msg):
+        self.get_logger().info(f"QR code detected: {msg}")
+    #   self.get_logger().info("Looking for QR code")
+    #   self.arm_pub.publish("look_for_qr")
+    #   time.sleep(5)
+    
 
     def greet_face(self, msg):
         #self.audio_engine.say(msg)
@@ -218,9 +158,15 @@ class RobotCommander(Node):
             #So i am not sure how this works (cannot check)
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
             self.camera_image = cv_image
+
+            qr_detector = cv2.QRCodeDetector()
+            val, _, _ = qr_detector.detectAndDecode(cv_image)
+            print(val)
+
         except CvBridgeError as e:
             self.get_logger().error(f"Error converting image: {e}")
         return
+    
 
     def park(self):
         self.get_logger().info("PARKINGGGGGGGGGGGGGGGG")
@@ -835,6 +781,8 @@ def main(args=None):
     # [2.23,-1.78,-1] --> 11
     # [0.63,-0.76,0.458],[1.5,-0.4,-0.069]   9 and 10 possitions!!!
 
+    rc.arm_pub.publish("look_for_qr")
+    time.sleep(2)
     marked_rings = []
     i = 0
     while len(points) > i:
