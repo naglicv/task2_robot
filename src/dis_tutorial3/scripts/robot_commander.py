@@ -41,6 +41,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from rclpy.qos import qos_profile_sensor_data
+import urllib.request
 
 import math
 #import pyttsx3
@@ -132,6 +133,9 @@ class RobotCommander(Node):
         self.bridge = CvBridge()
         self.parking_initiated = False
 
+        # if this is not None, then image of Mona is downloaded
+        self.mona_link = None
+
         #self.audio_engine = pyttsx3.init()
 
         self.get_logger().info(f"Robot commander has been initialized!")
@@ -142,10 +146,12 @@ class RobotCommander(Node):
 
     def qr_callback(self, msg):
         self.get_logger().info(f"QR code detected: {msg}")
-    #   self.get_logger().info("Looking for QR code")
-    #   self.arm_pub.publish("look_for_qr")
-    #   time.sleep(5)
-
+        if "vicos" in msg.data:
+            self.mona_link = msg.data
+            self.get_logger().info(f"Starting to download Mona Lisa image from {self.mona_link}")
+            urllib.request.urlretrieve(self.mona_link, "mona_lisa.jpg")
+            time.sleep(1)
+   
     def ring_color_callback(self, msg):
         for ring in self.rings_found:
                 if ring[1] == "COLOR":
@@ -787,7 +793,10 @@ def main(args=None):
     # [2.23,-1.78,-1] --> 11
     # [0.63,-0.76,0.458],[1.5,-0.4,-0.069]   9 and 10 possitions!!!
 
-    rc.arm_pub.publish("look_for_qr")
+
+    arm_msg = String()
+    arm_msg.data = "look_for_qr"
+    rc.arm_pub.publish(arm_msg)
     time.sleep(2)
     marked_rings = []
     i = 0

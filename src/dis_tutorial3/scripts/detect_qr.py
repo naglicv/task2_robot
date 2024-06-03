@@ -14,12 +14,14 @@
 # limitations under the License.
 
 
+import time
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+import urllib.request
 
 class QRCodeReader(Node):
     def __init__(self, node_name='qr_code_reader', namespace=''):
@@ -34,6 +36,7 @@ class QRCodeReader(Node):
         self.qr_info_pub = self.create_publisher(String, '/qr_info', 10)
 
         self.qr_detector = cv2.QRCodeDetector()
+        self.link_found = False
 
     def camera_callback(self, msg):
         try:
@@ -45,7 +48,12 @@ class QRCodeReader(Node):
                 qr_msg = String()
                 qr_msg.data = val
                 self.qr_info_pub.publish(qr_msg)
-
+                if "vicos" in val and self.link_found == False:
+                    self.link_found = True
+                    print("Found the link!")
+                    urllib.request.urlretrieve(val, "mona_lisa.jpg")
+                    time.sleep(1)
+                
         except CvBridgeError as e:
             self.get_logger().error(f"Error converting image: {e}")
 
