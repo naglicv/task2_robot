@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import math
+import time
 import rclpy
 from rclpy.node import Node
 import cv2
@@ -15,6 +16,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, qos_profile_sensor_data
+from std_msgs.msg import String
 #import pyttsx3
 
 qos_profile = QoSProfile(
@@ -49,6 +51,7 @@ class RingDetector(Node):
         # Publiser for the visualization markers
         self.ring_pub = self.create_publisher(Marker, "/breadcrumbs", QoSReliabilityPolicy.BEST_EFFORT)
         self.ring_pub_point = self.create_publisher(PointStamped, "/ring", qos_profile)
+        self.ring_color_pub = self.create_publisher(String, "/ring_color", 10)
 
         # self.audio_engine = pyttsx3.init()
 
@@ -408,6 +411,11 @@ class RingDetector(Node):
                     self.get_logger().info(f"position z {d[2]}")
 
                     self.ring_pub.publish(marker)
+                    time.sleep(1)
+                    ring_color_msg = String()
+                    ring_color_msg.data = color
+                    self.ring_color_pub.publish(ring_color_msg)
+                
                     self.mapped_rings.append((float(d[0]), float(d[1]), float(d[2]), color))
 
                     break

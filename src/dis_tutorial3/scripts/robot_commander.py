@@ -78,6 +78,7 @@ class RobotCommander(Node):
         self.status = None
         self.initial_pose_received = False
         self.is_docked = None
+        self.rings_found = []
 
         self.camera_image = None
         self.processing_position = False
@@ -105,6 +106,7 @@ class RobotCommander(Node):
         self.ring_sub = self.create_subscription(Marker, "/breadcrumbs", self.breadcrumbs_callback, QoSReliabilityPolicy.BEST_EFFORT)
 
         self.qr_detect_sub = self.create_subscription(String, '/qr_info', self.qr_callback, 10)
+        self.ring_color_sub = self.create_subscription(String, "/ring_color", self.ring_color_callback, 10)
 
         self.vel_pub = self.create_publisher(Twist,
                                              '/cmd_vel_nav',
@@ -135,7 +137,7 @@ class RobotCommander(Node):
         self.get_logger().info(f"Robot commander has been initialized!")
 
     def breadcrumbs_callback(self, msg):
-        self.latest_ring_marker_pose = msg.pose.position
+        self.rings_found.append(msg.pose.position, "COLOR")
         self.rings_detected += 1
 
     def qr_callback(self, msg):
@@ -143,7 +145,11 @@ class RobotCommander(Node):
     #   self.get_logger().info("Looking for QR code")
     #   self.arm_pub.publish("look_for_qr")
     #   time.sleep(5)
-    
+
+    def ring_color_callback(self, msg):
+        for ring in self.rings_found:
+                if ring[1] == "COLOR":
+                    ring[1] = msg.data
 
     def greet_face(self, msg):
         #self.audio_engine.say(msg)
