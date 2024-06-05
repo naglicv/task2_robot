@@ -45,7 +45,7 @@ class TranformPoints(Node):
         self.marker_pub = self.create_publisher(Marker, "/breadcrumbs", QoSReliabilityPolicy.BEST_EFFORT)
         self.face_sub = self.create_subscription(PointStamped, "/face", self.face_callback, qos_profile)
         self.ring_sub = self.create_subscription(PointStamped, "/ring", self.ring_callback, qos_profile)
-        #self.cylinder_sub = self.create_subscription(PointStamped, "/cylinder", self.cylinder_callback, qos_profile)
+        # self.cylinder_sub = self.create_subscription(PointStamped, "/cylinder", self.cylinder_callback, qos_profile)
         #self.cylinder_sub = self.create_subscription(PointStamped, "/detected_cylinder", self.cylinder_callback, qos_profile)
         #self.parking_space_sub = self.create_subscription(PointStamped, "/parking_space", self.parking_space_callback, qos_profile)
 
@@ -121,7 +121,10 @@ class TranformPoints(Node):
         scale = 0.15
         marker.scale.x = scale
         marker.scale.y = scale
-        marker.scale.z = scale
+        if label == "ring":
+            marker.scale.z = 0.12
+        if label == "face":
+            marker.scale.z = 0.15
 
         # Set the color
         marker.color.r = color[0]

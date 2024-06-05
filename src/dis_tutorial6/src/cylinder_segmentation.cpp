@@ -2,6 +2,7 @@
 #include <pcl/ModelCoefficients.h>
 #include <pcl/features/normal_3d.h>
 #include <pcl/filters/extract_indices.h>
+#include <pcl/filters/conditional_removal.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
@@ -29,14 +30,123 @@ std::shared_ptr<rclcpp::Node> node;
 std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
 std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
 
-typedef pcl::PointXYZ PointT;
+typedef pcl::PointXYZRGB PointT;
 
 int marker_id = 0;
 float error_margin = 0.02;  // 2 cm margin for error
 float target_radius = 0.11;
 bool verbose = false;
 
-// set up PCL RANSAC objects
+std::string target_color = "unknown";
+std::vector<std::string> colorNames = {"red", "green", "blue", "black", "yellow"};
+std::vector<std_msgs::msg::ColorRGBA> colorList;
+
+void initializeColorList() {
+    // Red
+    std_msgs::msg::ColorRGBA red;
+    red.r = 1.0f;
+    red.g = 0.0f;
+    red.b = 0.0f;
+    red.a = 1.0f;
+    colorList.push_back(red);
+
+    // Green
+    std_msgs::msg::ColorRGBA green;
+    green.r = 0.0f;
+    green.g = 1.0f;
+    green.b = 0.0f;
+    green.a = 1.0f;
+    colorList.push_back(green);
+
+    // Blue
+    std_msgs::msg::ColorRGBA blue;
+    blue.r = 0.0f;
+    blue.g = 0.0f;
+    blue.b = 1.0f;
+    blue.a = 1.0f;
+    colorList.push_back(blue);
+
+    // Black
+    std_msgs::msg::ColorRGBA black;
+    black.r = 0.0f;
+    black.g = 0.0f;
+    black.b = 0.0f;
+    black.a = 1.0f;
+    colorList.push_back(black);
+
+    // Yellow
+    std_msgs::msg::ColorRGBA yellow;
+    yellow.r = 1.0f;
+    yellow.g = 1.0f;
+    yellow.b = 0.0f;
+    yellow.a = 1.0f;
+    colorList.push_back(yellow);
+}
+
+
+std::string getColor(int r, int g, int b) {
+    // Define a threshold for determining if a color component is "significant"
+    float threshold = 70;
+
+    // Check for black
+    if (r < threshold && g < threshold && b < threshold) {
+        return "black";
+    }
+
+    // Check for red
+    if (r > threshold && g < threshold && b < threshold) {
+        return "red";
+    }
+
+    // Check for green
+    if (r < threshold && g > threshold && b < threshold) {
+        return "green";
+    }
+
+    // Check for blue
+    if (r < threshold && g < threshold && b > threshold) {
+        return "blue";
+    }
+
+    // Check for yellow (red + green)
+    if (r > threshold && g > threshold && b < threshold) {
+        return "yellow";
+    }
+
+    // If none of the above conditions are met, return "unknown"
+    return "unknown";
+}
+
+
+bool filterByColor(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& cloud) {
+    // Calculate the average color of the point cloud
+    int total_r = 0, total_g = 0, total_b = 0;
+    for (size_t i = 0; i < cloud->points.size(); ++i) {
+        pcl::PointXYZRGB& point = cloud->points[i];
+        total_r += point.r;
+        total_g += point.g;
+        total_b += point.b;
+    }
+    int avg_r = total_r / cloud->points.size();
+    int avg_g = total_g / cloud->points.size();
+    int avg_b = total_b / cloud->points.size();
+
+    // Define the threshold for the color difference
+    int threshold = 40;  // Adjust this value as needed
+
+    // std::cout << "Red: " << avg_r << " Green: " << avg_g << " Blue: " << avg_b << std::endl;
+    target_color = getColor(avg_r, avg_g, avg_b);
+
+    // If the average color components are close to each other, return false
+    if ((std::abs(avg_r - avg_g) <= threshold && std::abs(avg_g - avg_b) <= threshold && std::abs(avg_r - avg_b) <= threshold && !(avg_r < 20 && avg_g < 20 && avg_b < 20)) || target_color == "unknown") {
+        //std::cout << "Discard" << std::endl;
+        return false;
+    }
+
+
+    // If the average color components are not close to each other, return true
+    return true;
+}
 
 void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     // save timestamp from message
@@ -125,8 +235,8 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     seg.setMethodType(pcl::SAC_RANSAC);
     seg.setNormalDistanceWeight(0.1);
     seg.setMaxIterations(100);
-    seg.setDistanceThreshold(0.05);
-    seg.setRadiusLimits(0.06, 0.2);
+    seg.setDistanceThreshold(0.03);
+    seg.setRadiusLimits(0.06, 0.15);
     seg.setInputCloud(cloud_filtered2);
     seg.setInputNormals(cloud_normals2);
 
@@ -155,6 +265,11 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     extract.setNegative(false);
     pcl::PointCloud<PointT>::Ptr cloud_cylinder(new pcl::PointCloud<PointT>());
     extract.filter(*cloud_cylinder);
+
+    // std::cout << "Red: " << int(cloud_cylinder->points[0].r) << " Green: " << int(cloud_cylinder->points[0].g) << " Blue: " << int(cloud_cylinder->points[0].b) << std::endl;
+    if (!filterByColor(cloud_cylinder)) {
+        return;
+    }
 
     // calculate marker
     pcl::compute3DCentroid(*cloud_cylinder, centroid);
@@ -193,7 +308,7 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     marker.header.frame_id = "map";
     marker.header.stamp = now;
 
-    marker.ns = "cylinder";
+    marker.ns = target_color;
     // marker.id = 0; // only latest marker
     marker.id = marker_id++;  // generate new markers
 
@@ -208,14 +323,28 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     marker.pose.orientation.z = 0.0;
     marker.pose.orientation.w = 1.0;
 
-    marker.scale.x = 0.1;
-    marker.scale.y = 0.1;
-    marker.scale.z = 0.1;
-
-    marker.color.r = 0.0f;
-    marker.color.g = 1.0f;
-    marker.color.b = 0.0f;
-    marker.color.a = 1.0f;
+    marker.scale.x = 0.2;
+    marker.scale.y = 0.2;
+    marker.scale.z = 0.2;
+    std::cout << "Detected " << target_color << " cylinder" << std::endl;
+    int index = -1;
+    for (size_t i = 0; i < colorNames.size(); ++i) {
+        if (colorNames[i] == target_color) {
+            index = i;
+            break;
+        }
+    }
+    if (index == -1) {
+        std::cerr << "Color not found" << std::endl;
+        marker.color = colorList[0];
+    } else {
+        marker.color = colorList[index];
+    }
+    // marker.color.r = 0.0f;
+    // marker.color.g = 1.0f;
+    // marker.color.b = 0.0f;
+    // marker.color.a = 1.0f;
+    
 
     // marker.lifetime = rclcpp::Duration(1,0);
     marker.lifetime = rclcpp::Duration(0,0);
@@ -259,6 +388,7 @@ int main(int argc, char** argv) {
     planes_pub = node->create_publisher<sensor_msgs::msg::PointCloud2>("planes", 1);
     cylinder_pub = node->create_publisher<sensor_msgs::msg::PointCloud2>("cylinder", 1);
     marker_pub = node->create_publisher<visualization_msgs::msg::Marker>("detected_cylinder", 1);
+    initializeColorList();
 
     rclcpp::spin(node);
     rclcpp::shutdown();

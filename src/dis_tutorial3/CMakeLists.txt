@@ -31,6 +31,8 @@ install(PROGRAMS
   scripts/robot_commander.py
   scripts/detect_qr.py
   scripts/transform_point.py
+  scripts/detect_mona.py
+  scripts/detect_mona_liza.py
   DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

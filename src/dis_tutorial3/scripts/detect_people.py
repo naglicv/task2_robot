@@ -70,7 +70,8 @@ class detect_faces(Node):
 		self.get_logger().info(f"Node has been initialized! Will publish face markers to {marker_topic}.")
 
 	def breadcrumbs_callback(self, msg):
-		self.detected_face_pub.publish(msg)
+		if msg.scale.z == 0.15:
+			self.detected_face_pub.publish(msg)
 
 	def calculate_reconstruction_error(self, original, reconstructed):
 		return np.mean((original - reconstructed) ** 2, axis=-1)

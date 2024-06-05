@@ -52,6 +52,9 @@ class RingDetector(Node):
         self.ring_pub = self.create_publisher(Marker, "/breadcrumbs", QoSReliabilityPolicy.BEST_EFFORT)
         self.ring_pub_point = self.create_publisher(PointStamped, "/ring", qos_profile)
         self.ring_color_pub = self.create_publisher(String, "/ring_color", 10)
+        self.ring_pos_sub = self.create_subscription(Marker, "/breadcrumbs", self.ring_pos_sub_callback,QoSReliabilityPolicy.BEST_EFFORT)
+        self.detected_ring_coord_pub = self.create_publisher(Marker, "/detected_ring_coord",QoSReliabilityPolicy.BEST_EFFORT)
+        # self.transform_rings_pub = self.create_publisher(Marker, "/ring")
 
         # self.audio_engine = pyttsx3.init()
 
@@ -63,12 +66,33 @@ class RingDetector(Node):
         cv2.namedWindow("Detected contours", cv2.WINDOW_NORMAL)
         cv2.namedWindow("Detected rings", cv2.WINDOW_NORMAL)
         cv2.namedWindow("Depth window", cv2.WINDOW_NORMAL)
+        self.latest_color = ""
+        self.detected_rings = 0
 
         self.rings = []
         self.rings_marked = []
         self.depth_info = None
         self.ring_detected = False
-        self.mapped_rings = []       
+        self.mapped_rings = []
+
+    def ring_pos_sub_callback(self, msg):
+        # print(self.latest_color)
+
+        if msg.scale.z == 0.12:
+            if self.latest_color == "red":
+                msg.scale.z = 0.11
+            elif self.latest_color == "green":
+                msg.scale.z = 0.12
+            elif self.latest_color == "blue":
+                msg.scale.z = 0.13
+            elif self.latest_color == "black":
+                msg.scale.z = 0.14
+            
+            self.detected_ring_coord_pub.publish(msg)
+            # time.sleep(2)
+            # self.ring_color_pub.publish(self.latest_color)
+            
+
 
     def image_callback(self, data):
         # self.get_logger().info(f"I got a new image! Will try to find rings...")
@@ -152,6 +176,7 @@ class RingDetector(Node):
 
             #    self.rings.append((int(e1[0][0]), int(e1[0][1]), color))
             
+               self.latest_color = color
                self.ring_detected = True
                ## --------------------------------------------------------------
                ## At this point we have a correct ring detected and the color of it. Need to mark this on the map.
@@ -202,7 +227,7 @@ class RingDetector(Node):
             point.point.z = 0.0  # Assuming the ring is in the plane of the image
 
             # Publish the point
-            self.ring_pub_point.publish(point)
+            # self.ring_pub_point.publish(point)
        
 
         if len(candidates)>0:
@@ -273,7 +298,7 @@ class RingDetector(Node):
         # Extract the region of interest (ROI) from the image
         roi = cv_image[y_min:y_max, x_min:x_max]
         # cv2.ellipse(cv_image, e1, (0, 0, 255), 2)
-        cv2.imshow("cropped image",roi)
+        cv2.imshow("cropped image", roi)
 
 
         # Count the number of pixels for each color
@@ -285,21 +310,26 @@ class RingDetector(Node):
         # self.get_logger().info(f"green px {green_pixels}")
         # self.get_logger().info(f"red px  {red_pixels}")
 
-
-        if blue_pixels > 10:
-            return "blue"
-        elif blue_pixels > 2 and green_pixels > 2 and red_pixels > 0:
+        if blue_pixels >= 1 and green_pixels >= 1 and red_pixels >= 1:
             return "black"
     
         green_pixels = np.sum(roi[:,:,1] > 120)  
-        red_pixels = np.sum(roi[:,:,2] > 120)  
+        red_pixels = np.sum(roi[:,:,2] > 120)
+        blue_pixels = np.sum(roi[:,:,0] > 120)
+
+        # self.get_logger().info(f"blue px {blue_pixels}")
+        # self.get_logger().info(f"green px {green_pixels}")
+        # self.get_logger().info(f"red px  {red_pixels}")
+  
 
         # self.get_logger().info(f"green px {green_pixels}")
         # self.get_logger().info(f"red px  {red_pixels}")
-        if green_pixels > red_pixels:
+        if green_pixels > red_pixels and green_pixels > blue_pixels:
             return "green"
+        elif red_pixels > green_pixels and red_pixels > blue_pixels:
+            return "red"
         
-        return "red"
+        return "blue"
 
 
     def depth_callback(self,data):
@@ -410,6 +440,13 @@ class RingDetector(Node):
                     self.get_logger().info(f"position y {d[1]}")
                     self.get_logger().info(f"position z {d[2]}")
 
+                    point = PointStamped()
+                    point.header.frame_id = "/base_link"
+                    point.point.x = float(d[0])
+                    point.point.y = float(d[1])
+                    point.point.z = float(d[2])
+
+                    self.ring_pub_point.publish(point)
                     self.ring_pub.publish(marker)
                     time.sleep(1)
                     ring_color_msg = String()

@@ -50,7 +50,16 @@ import urllib.request
 import math
 import tensorflow as tf
 import speech_recognition as sr
+
+class CoordinateColor:
+    def __init__(self, x, y, color):
+        self.x = x
+        self.y = y
+        self.color = color
 #import pyttsx3
+
+# ring - 0.12
+# face - 0.15
 
 
 class TaskResult(Enum):
@@ -116,14 +125,15 @@ class RobotCommander(Node):
                                                    self.camera_callback,
                                                    qos_profile_sensor_data)
                                                    
-        
+                                                    
+        self.end = self.create_subscription(String, "end", self.end_callback, 10)
         self.face_img_sub = self.create_subscription(Image, '/detected_face', self.save_face_callback, qos_profile_sensor_data)
 
         self.ring_sub = self.create_subscription(Marker, "/breadcrumbs", self.breadcrumbs_callback, QoSReliabilityPolicy.BEST_EFFORT)
         self.detected_face_sub = self.create_subscription(Marker, "/detected_face_coord", self.detected_face_callback, QoSReliabilityPolicy.BEST_EFFORT)
 
         self.qr_detect_sub = self.create_subscription(String, '/qr_info', self.qr_callback, 10)
-        self.ring_color_sub = self.create_subscription(String, "/ring_color", self.ring_color_callback, 10)
+        # self.ring_color_sub = self.create_subscription(String, "/ring_color", self.ring_color_callback, 10)
 
         self.vel_pub = self.create_publisher(Twist,
                                              '/cmd_vel_nav',
@@ -136,11 +146,16 @@ class RobotCommander(Node):
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
         self.face_pub = self.create_publisher(PointStamped, 'face', qos_profile)
 
+        self.detected_ring_coord_sub = self.create_subscription(Marker, "/detected_ring_coord",self.detected_ring_coord_sub_callback, QoSReliabilityPolicy.BEST_EFFORT)
+
         # ROS2 Action clients
         self.nav_to_pose_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.spin_client = ActionClient(self, Spin, 'spin')
         self.undock_action_client = ActionClient(self, Undock, 'undock')
         self.dock_action_client = ActionClient(self, Dock, 'dock')
+        
+        self.subscription = self.create_subscription(Marker, 'detected_cylinder', self.cylinder_callback, 10)
+        self.cylinder_pub = self.create_publisher(Marker, "/cylinders_final", QoSReliabilityPolicy.BEST_EFFORT)
 
         self.latest_people_marker_pose = None
         self.current_pose = None
@@ -149,6 +164,11 @@ class RobotCommander(Node):
         self.bridge = CvBridge()
         self.parking_initiated = False
         self.breadcrumbs_face = None
+        self.detect_cylinders = False
+        self.detected_cylinders = []
+        self.last_cylinder_detected = None
+
+        self.found_mona_lisa = None
 
         # if this is not None, then image of Mona is downloaded
         self.mona_link = None
@@ -165,6 +185,25 @@ class RobotCommander(Node):
 
         #cv2.imshow("Detected Face", cv_image)
         #cv2.waitKey(1)
+
+    def cylinder_callback(self, msg):
+        if self.detect_cylinders:
+            print("I AM GETTING CALLED")
+            marker = msg
+            for cylinder in self.detected_cylinders:
+                if abs(cylinder.x - marker.pose.position.x) < 0.5 and abs(cylinder.y - marker.pose.position.y) < 0.5:
+                    return
+            
+            new_cylinder = CoordinateColor(marker.pose.position.x, marker.pose.position.y, marker.ns)  # replace x, y, color with actual values
+            print(f"New cylinder detected at x: {new_cylinder.x}, y: {new_cylinder.y}, color: {new_cylinder.color}")
+            self.detected_cylinders.append(new_cylinder)
+            marker.id = len(self.detected_cylinders) - 1
+            self.cylinder_pub.publish(marker)
+            self.last_cylinder_detected = [marker.pose.position.x, marker.pose.position.y]
+
+    def end_callback(self, msg):
+        print("THIS IS THE END GUYSSSSSSSS LETSSSSSs GOOOOOOOOOOOOOOOOOOOOOOOO")
+        self.found_mona_lisa = msg.data
 
     def detected_face_callback(self, msg):
         self.latest_people_marker_pose = msg.pose.position
@@ -222,9 +261,10 @@ class RobotCommander(Node):
         return np.mean((original - reconstructed) ** 2, axis=-1)
 
     def breadcrumbs_callback(self, msg):
-        print("I AM GETTING CALLED!!!")
-        self.breadcrumbs_face = msg.pose.position
-        print(f"x {self.breadcrumbs_face.x} y {self.breadcrumbs_face.y}")
+        # print("I AM GETTING CALLED!!!")
+        if  msg.scale.z == 0.15:
+            self.breadcrumbs_face = msg.pose.position
+        # print(f"x {self.breadcrumbs_face.x} y {self.breadcrumbs_face.y}")
         # self.rings_found.append(msg.pose.position, "COLOR")
         self.rings_detected += 1
 
@@ -236,10 +276,27 @@ class RobotCommander(Node):
             urllib.request.urlretrieve(self.mona_link, "mona_lisa.jpg")
             time.sleep(1)
    
-    def ring_color_callback(self, msg):
-        for ring in self.rings_found:
-                if ring[1] == "COLOR":
-                    ring[1] = msg.data
+    # def ring_color_callback(self, msg):
+    #     for ring in self.rings_found:
+    #             if ring[1] == "COLOR":
+    #                 ring[1] = msg.data
+
+    def detected_ring_coord_sub_callback(self, msg):
+        if len(self.rings_found) == 4:
+            return
+        
+        if msg.scale.z == 0.11:
+            self.rings_found.append((msg.pose.position, "red"))
+        elif msg.scale.z == 0.12:
+            self.rings_found.append((msg.pose.position, "green"))
+        elif msg.scale.z == 0.13:
+            self.rings_found.append((msg.pose.position, "blue"))
+        elif msg.scale.z == 0.14:
+            self.rings_found.append((msg.pose.position, "black"))
+        
+
+        print("so far these rings are found")
+        print(self.rings_found)
 
     def greet_face(self, msg):
         #self.audio_engine.say(msg)
@@ -255,8 +312,8 @@ class RobotCommander(Node):
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
             self.camera_image = cv_image
 
-            qr_detector = cv2.QRCodeDetector()
-            val, _, _ = qr_detector.detectAndDecode(cv_image)
+            # qr_detector = cv2.QRCodeDetector()
+            # val, _, _ = qr_detector.detectAndDecode(cv_image)
             # print(val)
 
         except CvBridgeError as e:
@@ -866,76 +923,194 @@ def main(args=None):
 
 
     arm_msg = String()
-    arm_msg.data = "look_for_qr"
+    arm_msg.data = "look_for_parking"
     rc.arm_pub.publish(arm_msg)
-    time.sleep(2)
+    
     marked_rings = []
     marked_poses = []
-    model = tf.keras.models.load_model('/home/kappa/task2_robot/src/dis_tutorial3/scripts/anomaly_detection_model.h5')
+    # model = tf.keras.models.load_model('/home/kappa/task2_robot/src/dis_tutorial3/scripts/anomaly_detection_model.h5')
     approached_face = None
     i = 0
     while len(points) > i:
-        try:
-            # NOTE: This part has to change. We should run it only after we visit every point.
-            #       Afer we visit every point then we park.
-            #       Then we check for cylinder.
-            #       Then we go to real Mona Lisa.
-            if rc.list_of_suggested_rings_1 and rc.list_of_suggested_rings_2:
-                goal_pose = PoseStamped()
-                goal_pose.header.frame_id = 'map'
-                # goal_pose.header.stamp = self.get_clock().now().to_msg()
-                goal_pose.pose.position.x = 2.45
-                goal_pose.pose.position.y = -1.6
-                # goal_pose.pose.position.z = 0.0
-                goal_pose.pose.orientation = rc.YawToQuaternion(-1.0)
-                rc.goToPose(goal_pose)
+        
+        # NOTE: This part has to change. We should run it only after we visit every point.
+        #       Afer we visit every point then we park.
+        #       Then we check for cylinder.
+        #       Then we go to real Mona Lisa.
+        detected_colors_so_far = []
+        print("I haven crashed yet")
+        if len(rc.rings_found) != 0:
+            for _, color in rc.rings_found:
+                detected_colors_so_far.append(color)
+        print(detected_colors_so_far)
+        if rc.list_of_suggested_rings_1 is not None and rc.list_of_suggested_rings_2 is not None:
+            intersected_color_set = rc.list_of_suggested_rings_1.intersection(rc.list_of_suggested_rings_2)
+            print("first list")
+            print(rc.list_of_suggested_rings_1)
+            print("second list")
+            print(rc.list_of_suggested_rings_2)
+            print(intersected_color_set)
+            if intersected_color_set:
+                intersected_color = list(intersected_color_set)[0]
+                print(f"A current intersected colors {intersected_color}")
 
-                while not rc.isTaskComplete():
-                    rc.info("Moving to the green ring.")
-                    time.sleep(1)
-
-
+        if rc.list_of_suggested_rings_1 and rc.list_of_suggested_rings_2 and intersected_color in detected_colors_so_far :
+            goal_pose = PoseStamped()
+            goal_pose.header.frame_id = 'map'
+            goal_ring = None
+            for point_ring, color in rc.rings_found:
+                if color == intersected_color:
+                    goal_ring = point_ring
+            print(f"AAAA im going towards the {intersected_color} ring at x: {goal_ring.x} y: {goal_ring.y}")
+            # goal_pose.header.stamp = self.get_clock().now().to_msg()
+            goal_pose.pose.position.x = goal_ring.x
+            goal_pose.pose.position.y = goal_ring.y
+            # goal_pose.pose.position.z = 0.0
+            goal_pose.pose.orientation = rc.YawToQuaternion(-1.0)
+            arm_msg = String()
+            arm_msg.data = "look_for_parking"
+            rc.arm_pub.publish(arm_msg)
+            rc.goToPose(goal_pose)
+            while not rc.isTaskComplete():
+                rc.info("Moving to the  ring.")
+                time.sleep(1)
+            rclpy.spin_once(rc)
+            rc.info("Starting to Park outside the while loop")
+            while not rc.parked:
+                rc.info("Starting to Park")
+                rc.park()
+                if rc.parked:
+                    break
                 rclpy.spin_once(rc)
-                rc.info("Starting to Park outside the while loop")
-                while not rc.parked:
-                    rc.info("Starting to Park")
-                    rc.park()
-                    if rc.parked:
-                        break
-                    rclpy.spin_once(rc)
-
-                rc.parked = False
+            rc.parked = False
+            rc.final_check_left()
+            while not rc.isTaskComplete():
+                rc.info("Waiting for the task to complete...")
+                rclpy.spin_once(rc)
+                time.sleep(1)
+            time.sleep(4.0)    
+            rclpy.spin_once(rc)
+            #rc.park()
+            rc.parked = False
+            #rclpy.spin_once(rc)
+            # This is still not checked if it works. Old code is below it!
+            for ii in range(10):
                 rc.final_check_left()
                 while not rc.isTaskComplete():
                     rc.info("Waiting for the task to complete...")
                     rclpy.spin_once(rc)
                     time.sleep(1)
-                time.sleep(4.0)    
-                rclpy.spin_once(rc)
-                #rc.park()
-                rc.parked = False
+                time.sleep(2.0)
                 #rclpy.spin_once(rc)
+                rc.parked = False    
+            # This should break out of whole loop. 
+            # After this we should look around to detect cylinder. 
+            # After that publish to arm_controller and move arm to read QR Code on top of cylinder.
+            # With taht we teach model to detect real Mona Lisa. 
+            # Use that model and go around map and find it!
+            print("Now I am parked and will engage cylinder position!")
+            arm_msg = String()
+            arm_msg.data = "look_for_qr"
+            rc.arm_pub.publish(arm_msg)
+            time.sleep(2)
+
+            rc.detect_cylinders = True
+            spin_dist = 2.0 * math.pi
+
+            rc.spin(spin_dist)
+            while not rc.isTaskComplete():
+                time.sleep(1)
+
+            rc.detect_cylinders = False
+
+            # Approach newly detected cylinder
+            current_pose = rc.current_pose
+            last_detected = rc.last_cylinder_detected
+            if last_detected is not None:
+                target_pose = PoseStamped()
+                target_pose.header.frame_id = 'map'
+                target_pose.header.stamp = rc.get_clock().now().to_msg()
 
 
-                # This is still not checked if it works. Old code is below it!
-                for i in range(10):
-                    rc.final_check_left()
-                    while not rc.isTaskComplete():
-                        rc.info("Waiting for the task to complete...")
-                        rclpy.spin_once(rc)
-                        time.sleep(1)
-                    time.sleep(2.0)
-                    #rclpy.spin_once(rc)
-                    rc.parked = False    
-                # This should break out of whole loop. 
-                # After this we should look around to detect cylinder. 
-                # After that publish to arm_controller and move arm to read QR Code on top of cylinder.
-                # With taht we teach model to detect real Mona Lisa. 
-                # Use that model and go around map and find it!
-                break
+                # Calculate the vector from the robot's current position to the cylinder
+                dx = last_detected[0] - current_pose.pose.position.x
+                dy = last_detected[1] - current_pose.pose.position.y
+                magnitude = math.sqrt(dx**2 + dy**2)
+                
+                # Calculate the unit vector
+                unit_dx = dx / magnitude
+                unit_dy = dy / magnitude
 
+                # Set the target position to be slightly before the cylinder
+                target_pose.pose.position.x = last_detected[0] - 0.07 * unit_dx
+                target_pose.pose.position.y = last_detected[1] - 0.07 * unit_dy
+
+                # Calculate orientation to face the target
+                target_yaw = math.atan2(dy, dx)
+                target_pose.pose.orientation = rc.YawToQuaternion(target_yaw)
+
+                # Send the robot to approach the face
+                rc.goToPose(target_pose)
+
+                while not rc.isTaskComplete():
+                    rc.info("Approaching the cylinder...")
+                    time.sleep(1)
+                time.sleep(2)
+
+            
+
+            break
+        point = points[i]
+        # If no new 'people_marker' pose, proceed with the next point in the list
+        goal_pose = PoseStamped()
+        goal_pose.header.frame_id = 'map'
+        goal_pose.header.stamp = rc.get_clock().now().to_msg()
+        goal_pose.pose.position.x = point[0]
+        goal_pose.pose.position.y = point[1]
+        goal_pose.pose.orientation = rc.YawToQuaternion(point[2])
+        rc.goToPose(goal_pose)
+        while not rc.isTaskComplete():
+            time.sleep(1)
+        # Here I put both ring detection and face approach in the same while loop.
+        # This way we only have to do everything onece.
+        # Also removed stoping logic and destroying the node since we are not stoping the robot at all.
+        rc.latest_ring_marker_pose = None
+        rc.latest_people_marker_pose = None
+        spin_dist = 0.25 * math.pi
+        n = 0
+        while n < 8:
+            rc.spin(spin_dist)
+            n+=1
+            while not rc.isTaskComplete():
+         
+                
+                rc.get_logger().info(f"curr pose x: {rc.current_pose.pose.position.x} y: {rc.current_pose.pose.position.y} z: {rc.current_pose.pose.orientation.z}")
+                approached_ring, marked_rings = rc.check_ring(marked_rings, point)
+                # Loading model and checking if we need to approach the face
+                error_map = None
+                mean_error = None
+                threshold = 0.1
+                img = None
+                # Here, we transform the face image to the same size as the model was trained on
+                if rc.current_face is not None and rc.current_face.size > 0:
+                    print("Calling the check approach function")
+                    approached_face, marked_poses = rc.check_approach(marked_poses, point)
+                    cv2.imshow("Detected Face", rc.current_face)
+                if approached_ring or approached_face:
+                    n = 0
+                # rc.check_approach(marked_poses, rc.current_pose)
+                time.sleep(1)
+        i+=1
+        
+
+    marked_poses = []
+    #model = tf.keras.models.load_model('/home/kappa/task2_robot/src/dis_tutorial3/scripts/anomaly_detection_model.h5')
+    approached_face = None
+    i = 0
+    while len(points) > i:
+        if rc.found_mona_lisa is None:
             point = points[i]
-            # If no new 'people_marker' pose, proceed with the next point in the list
+                # If no new 'people_marker' pose, proceed with the next point in the list
             goal_pose = PoseStamped()
             goal_pose.header.frame_id = 'map'
             goal_pose.header.stamp = rc.get_clock().now().to_msg()
@@ -960,12 +1135,8 @@ def main(args=None):
                 rc.spin(spin_dist)
                 n+=1
                 while not rc.isTaskComplete():
-
-             
-                    
                     rc.get_logger().info(f"curr pose x: {rc.current_pose.pose.position.x} y: {rc.current_pose.pose.position.y} z: {rc.current_pose.pose.orientation.z}")
                     approached_ring, marked_rings = rc.check_ring(marked_rings, point)
-
                     # Loading model and checking if we need to approach the face
                     error_map = None
                     mean_error = None
@@ -982,11 +1153,10 @@ def main(args=None):
                     # rc.check_approach(marked_poses, rc.current_pose)
                     time.sleep(1)
             i+=1
-        except IndexError:
-            print(f"Error: Attempted to access index {i} in points list, which has {len(points)} elements.")
-            break
-
+        else:
+            rc.destroyNode()
     rc.destroyNode()
+
     # And a simple example
 if __name__=="__main__":
     main()

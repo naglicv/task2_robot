@@ -96,7 +96,7 @@ class detect_faces(Node):
 		try:
 			cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
 
-			real_mona_lisa_image_paths = ["src/mona_lisa.jpg"]
+			real_mona_lisa_image_paths = ["/home/kappa/task2_robot/src/mona_lisa.jpg"]
 			real_images = self.load_images(real_mona_lisa_image_paths)
 
 
