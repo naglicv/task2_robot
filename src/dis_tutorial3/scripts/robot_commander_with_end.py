@@ -130,7 +130,7 @@ class RobotCommander(Node):
         # self.ring_sub = self.create_subscription(Marker, "/breadcrumbs", self.breadcrumbs_callback, QoSReliabilityPolicy.BEST_EFFORT) *********
         # self.detected_face_sub = self.create_subscription(Marker, "/detected_face_coord", self.detected_face_callback, QoSReliabilityPolicy.BEST_EFFORT)
 
-        # self.qr_detect_sub = self.create_subscription(String, '/qr_info', self.qr_callback, 10) *********
+        self.qr_detect_sub = self.create_subscription(String, '/qr_info', self.qr_callback, 10)
         # self.ring_color_sub = self.create_subscription(String, "/ring_color", self.ring_color_callback, 10)
 
         self.cylinder_pub = self.create_publisher(Marker, "/cylinders_final", QoSReliabilityPolicy.BEST_EFFORT)
@@ -1066,8 +1066,8 @@ def main(args=None):
         unit_dy = dy / magnitude
 
         # Set the target position to be slightly before the cylinder
-        target_pose.pose.position.x = last_detected[0] - 0.3 * unit_dx
-        target_pose.pose.position.y = last_detected[1] - 0.3 * unit_dy
+        target_pose.pose.position.x = last_detected[0] - 0.1 * unit_dx
+        target_pose.pose.position.y = last_detected[1] - 0.1 * unit_dy
 
         # Calculate orientation to face the target
         target_yaw = math.atan2(dy, dx)
@@ -1081,9 +1081,9 @@ def main(args=None):
             time.sleep(1)
         time.sleep(2)
 
-        arm_msg = String()
-        arm_msg.data = "look_for_qr"
-        rc.arm_pub.publish(arm_msg)
+        # arm_msg = String()
+        # arm_msg.data = "look_for_qr"
+        # rc.arm_pub.publish(arm_msg)
         time.sleep(10)
 
     # ---------------------------------END LOGIC.--------------------------------------------
