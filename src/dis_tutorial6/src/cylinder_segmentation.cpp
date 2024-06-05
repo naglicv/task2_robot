@@ -308,7 +308,7 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     marker.header.frame_id = "map";
     marker.header.stamp = now;
 
-    marker.ns = "cylinder";
+    marker.ns = target_color;
     // marker.id = 0; // only latest marker
     marker.id = marker_id++;  // generate new markers
 
@@ -323,9 +323,9 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     marker.pose.orientation.z = 0.0;
     marker.pose.orientation.w = 1.0;
 
-    marker.scale.x = 0.1;
-    marker.scale.y = 0.1;
-    marker.scale.z = 0.1;
+    marker.scale.x = 0.2;
+    marker.scale.y = 0.2;
+    marker.scale.z = 0.2;
     std::cout << "Detected " << target_color << " cylinder" << std::endl;
     int index = -1;
     for (size_t i = 0; i < colorNames.size(); ++i) {
