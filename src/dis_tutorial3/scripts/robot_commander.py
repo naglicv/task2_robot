@@ -32,6 +32,9 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import String
 import cv2
 
+from sensor_msgs.msg import Image, PointCloud2
+from sensor_msgs_py import point_cloud2 as pc2
+
 from irobot_create_msgs.action import Dock, Undock
 from irobot_create_msgs.msg import DockStatus
 
@@ -98,6 +101,8 @@ class RobotCommander(Node):
                                  'dock_status',
                                  self._dockCallback,
                                  qos_profile_sensor_data)
+        
+        # self.pointcloud_sub = self.create_subscription(PointCloud2, "/oakd/rgb/preview/depth/points", self.pointcloud_callback, qos_profile_sensor_data)
 
         self.localization_pose_sub = self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose',
                                                               self._amclPoseCallback,
@@ -110,10 +115,12 @@ class RobotCommander(Node):
                                                    '/top_camera/rgb/preview/image_raw',
                                                    self.camera_callback,
                                                    qos_profile_sensor_data)
+                                                   
         
         self.face_img_sub = self.create_subscription(Image, '/detected_face', self.save_face_callback, qos_profile_sensor_data)
 
         self.ring_sub = self.create_subscription(Marker, "/breadcrumbs", self.breadcrumbs_callback, QoSReliabilityPolicy.BEST_EFFORT)
+        self.detected_face_sub = self.create_subscription(Marker, "/detected_face_coord", self.detected_face_callback, QoSReliabilityPolicy.BEST_EFFORT)
 
         self.qr_detect_sub = self.create_subscription(String, '/qr_info', self.qr_callback, 10)
         self.ring_color_sub = self.create_subscription(String, "/ring_color", self.ring_color_callback, 10)
@@ -141,6 +148,7 @@ class RobotCommander(Node):
         self.rings_detected = 0
         self.bridge = CvBridge()
         self.parking_initiated = False
+        self.breadcrumbs_face = None
 
         # if this is not None, then image of Mona is downloaded
         self.mona_link = None
@@ -151,12 +159,15 @@ class RobotCommander(Node):
 
     # saving the face detected and the using it for model to make a prediction
     def save_face_callback(self, msg):
-        self.get_logger().info("Saving face image...")
+        # self.get_logger().info("Saving face image...")
         cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         self.current_face = cv_image
 
         #cv2.imshow("Detected Face", cv_image)
         #cv2.waitKey(1)
+
+    def detected_face_callback(self, msg):
+        self.latest_people_marker_pose = msg.pose.position
 
     # Speech recognition function. Saves colors in sets list_of_suggested_rings_1 and list_of_suggested_rings_2 if there are any!
     def recognize_colors(self):
@@ -211,7 +222,10 @@ class RobotCommander(Node):
         return np.mean((original - reconstructed) ** 2, axis=-1)
 
     def breadcrumbs_callback(self, msg):
-        self.rings_found.append(msg.pose.position, "COLOR")
+        print("I AM GETTING CALLED!!!")
+        self.breadcrumbs_face = msg.pose.position
+        print(f"x {self.breadcrumbs_face.x} y {self.breadcrumbs_face.y}")
+        # self.rings_found.append(msg.pose.position, "COLOR")
         self.rings_detected += 1
 
     def qr_callback(self, msg):
@@ -243,7 +257,7 @@ class RobotCommander(Node):
 
             qr_detector = cv2.QRCodeDetector()
             val, _, _ = qr_detector.detectAndDecode(cv_image)
-            print(val)
+            # print(val)
 
         except CvBridgeError as e:
             self.get_logger().error(f"Error converting image: {e}")
@@ -278,7 +292,7 @@ class RobotCommander(Node):
             #black_percentage_top = (black_pixels_top_left + black_pixels_top_right) / total_pixels
             #black_percentage_bottom = (black_pixels_bottom_left + black_pixels_bottom_right) / total_pixels
 
-            if (black_pixels_bottom_left + black_pixels_bottom_right == 0 or black_pixels_bottom_left + black_pixels_bottom_right <6000) and black_pixels_top_right + black_pixels_top_left == 0:  # If black is mostly on the bottom
+            if (black_pixels_bottom_left + black_pixels_bottom_right == 0 or black_pixels_bottom_left + black_pixels_bottom_right < 6000) and black_pixels_top_right + black_pixels_top_left == 0:  # If black is mostly on the bottom
                 self.get_logger().info("Reached parking spot. Stopping.")
                 self.get_logger().info(f"NUM OF PIXELS: {black_pixels_bottom_right + black_pixels_bottom_left}")
                 self.parked = True
@@ -452,7 +466,7 @@ class RobotCommander(Node):
         """Handle new messages from 'people_marker'."""
         self.debug('Received people marker pose')
         # Store the latest pose for use in the movement loop
-        self.latest_people_marker_pose = msg.pose.position
+        # self.latest_people_marker_pose = msg.pose.position
 
 
     def destroyNode(self):
@@ -477,13 +491,13 @@ class RobotCommander(Node):
         rclpy.spin_until_future_complete(self, send_goal_future)
         self.goal_handle = send_goal_future.result()
 
-        self.info("What the fuck")
+        # self.info("What the fuck")
         if not self.goal_handle.accepted:
             self.error('Goal to ' + str(pose.pose.position.x) + ' ' +
                        str(pose.pose.position.y) + ' was rejected!')
             return False
 
-        self.info("What the fuck")
+        # self.info("What the fuck")
         self.result_future = self.goal_handle.get_result_async()
         return True
 
@@ -726,6 +740,7 @@ class RobotCommander(Node):
         self.get_logger().info(f"IM LOOKING FOR FACES")
         #Check if there is a new 'people_marker' pose to go to first
         coord_face_relative_to_r = self.latest_people_marker_pose
+        # pcl_face = self.pcl_face_pos
         if coord_face_relative_to_r is not None:
             coord_face = PoseStamped()
             coord_face.header.frame_id = 'map'
@@ -750,47 +765,34 @@ class RobotCommander(Node):
                     return False, marked_poses
             
             marked_poses.append(coord_face)
-            point_msg = PointStamped()
-            point_msg.header.frame_id = 'base_link'
-            point_msg.header.stamp = self.get_clock().now().to_msg()
-            point_msg.point = coord_face_relative_to_r
-
-            self.face_pub.publish(point_msg)
-
-            self.get_logger().info(f"Number of detected faces so far: {len(marked_poses)}")
-            for l in range(len(marked_poses)):
-                self.get_logger().info(f"face {l}: x: {marked_poses[l].pose.position.x}, y: {marked_poses[l].pose.position.y}, z: {marked_poses[l].pose.orientation.z}")
+            
 
             # MOVE TOWARDS THE FACE
             goal_pose = PoseStamped()
             goal_pose.header.frame_id = 'map'
             goal_pose.header.stamp = self.get_clock().now().to_msg()
+            
+            distance_from_face = 0.1
+
+            if coord_face_relative_to_r.x > 0:
+                goal_pose.pose.position.x = coord_face_relative_to_r.x - distance_from_face
+            else:
+                goal_pose.pose.position.x = coord_face_relative_to_r.x + distance_from_face
+
+            if coord_face_relative_to_r.y > 0:
+                goal_pose.pose.position.y = coord_face_relative_to_r.y - distance_from_face
+            else:
+                goal_pose.pose.position.y = coord_face_relative_to_r.y + distance_from_face
 
             goal_pose.pose.orientation = self.YawToQuaternion(z1)
 
-            while abs(x1) >= 1.0 or abs(y1) >= 1.0:
-                curr_pose = self.current_pose.pose.position
-                if x1 < 0.3:
-                    goal_pose.pose.position.x = curr_pose.x
-                    goal_pose.pose.position.y = curr_pose.y + y1/2
-                elif y1 < 0.3:
-                    goal_pose.pose.position.x = curr_pose.x + x1/2
-                    goal_pose.pose.position.y = curr_pose.y
-                else:  
-                    goal_pose.pose.position.x = curr_pose.x + x1/2
-                    goal_pose.pose.position.y = curr_pose.y + y1/2
-                x1 = goal_pose.pose.position.x
-                y1 = goal_pose.pose.position.y
-                goal_pose.pose.orientation = self.YawToQuaternion(math.atan2(y1, x1))
-                self.goToPose(goal_pose)
-                while not self.isTaskComplete():
-                    self.info("Moving towards the face...")
-                    time.sleep(1)
 
-            
-            # while not self.isTaskComplete():
-            #     self.info("Moving towards the face...")
-            #     time.sleep(1)
+
+            self.get_logger().info(f"going to face on x: {goal_pose.pose.position.x} and y {goal_pose.pose.position.y}")
+            self.goToPose(goal_pose)
+            while not self.isTaskComplete():
+                self.info("Moving towards the face...")
+                time.sleep(1)
 
             self.latest_people_marker_pose = None
             spin_dist = 0.2 * math.pi
@@ -803,7 +805,7 @@ class RobotCommander(Node):
                    
                     if(self.latest_people_marker_pose is not None):
                         time.sleep(3)
-                        #self.greet_face("Hi there")
+                        self.greet_face("Hi there")
                         #self.get_logger().info(f"{self.hellos_said}")
                         #self.hellos_said += 1
                         #self.get_logger().info(f"Hello there!")
@@ -869,7 +871,7 @@ def main(args=None):
     time.sleep(2)
     marked_rings = []
     marked_poses = []
-    model = tf.keras.models.load_model('/home/kappa/Desktop/task2_robot-main/src/dis_tutorial3/scripts/anomaly_detection_model.h5')
+    model = tf.keras.models.load_model('/home/kappa/task2_robot/src/dis_tutorial3/scripts/anomaly_detection_model.h5')
     approached_face = None
     i = 0
     while len(points) > i:
@@ -959,6 +961,8 @@ def main(args=None):
                 n+=1
                 while not rc.isTaskComplete():
 
+             
+                    
                     rc.get_logger().info(f"curr pose x: {rc.current_pose.pose.position.x} y: {rc.current_pose.pose.position.y} z: {rc.current_pose.pose.orientation.z}")
                     approached_ring, marked_rings = rc.check_ring(marked_rings, point)
 
@@ -969,34 +973,10 @@ def main(args=None):
                     img = None
                     # Here, we transform the face image to the same size as the model was trained on
                     if rc.current_face is not None and rc.current_face.size > 0:
-                        rc.info("RESIZING IMG")
-                        img = cv2.resize(rc.current_face, (224, 224))
-                        img = img.astype('float32') / 255  
-                        img = np.expand_dims(img, axis=0)
-
-                        reconstructed_img = model.predict(img)[0]
-
-                        error_map = rc.calculate_reconstruction_error(img[0], reconstructed_img)
-                        mean_error = np.mean(error_map)
-
-                        # Changing the threshold value will change the sensitivity of the anomaly detection
-                        # 0.1 is used for detecting if face is painting of Mona Lisa or normal face
-                        # For detecting anomlies in the face, the threshold should be lower-->I think the best is 0.01 (we will check later on)
-                    threshold = 0.2
-                    rc.info("MODEL EVALUATING IMG")
-                    if mean_error and mean_error < threshold:
-                        rc.info("MODEL APROVED!")
+                        print("Calling the check approach function")
                         approached_face, marked_poses = rc.check_approach(marked_poses, point)
                         cv2.imshow("Detected Face", rc.current_face)
-                        cv2.waitKey(1)
-                        rc.current_face = None
-                    else:
-                        rc.info("MODEL DID NOT APROVEEE THIS IMG")
-                        rc.current_face = None
-                        continue    
 
-                    # This is not needed since we are not stoping the robot at all even if he greets all faces!
-                    
                     if approached_ring or approached_face:
                         n = 0
                     # rc.check_approach(marked_poses, rc.current_pose)
