@@ -30,8 +30,6 @@ std::shared_ptr<rclcpp::Node> node;
 std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
 std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
 
-std::string color_cylinder;
-
 typedef pcl::PointXYZRGB PointT;
 
 int marker_id = 0;
@@ -39,6 +37,7 @@ float error_margin = 0.02;  // 2 cm margin for error
 float target_radius = 0.11;
 bool verbose = false;
 
+std::string target_color = "unknown";
 std::vector<std::string> colorNames = {"red", "green", "blue", "black", "yellow"};
 std::vector<std_msgs::msg::ColorRGBA> colorList;
 
@@ -84,6 +83,7 @@ void initializeColorList() {
     colorList.push_back(yellow);
 }
 
+
 std::string getColor(int r, int g, int b) {
     // Define a threshold for determining if a color component is "significant"
     float threshold = 70;
@@ -117,6 +117,7 @@ std::string getColor(int r, int g, int b) {
     return "unknown";
 }
 
+
 bool filterByColor(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& cloud) {
     // Calculate the average color of the point cloud
     int total_r = 0, total_g = 0, total_b = 0;
@@ -134,16 +135,15 @@ bool filterByColor(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& cloud) {
     int threshold = 40;  // Adjust this value as needed
 
     // std::cout << "Red: " << avg_r << " Green: " << avg_g << " Blue: " << avg_b << std::endl;
-
-    color_cylinder = getColor(avg_r, avg_g, avg_b);
+    target_color = getColor(avg_r, avg_g, avg_b);
 
     // If the average color components are close to each other, return false
-    if ((std::abs(avg_r - avg_g) <= threshold && std::abs(avg_g - avg_b) <= threshold && std::abs(avg_r - avg_b) <= threshold && !(avg_r < 20 && avg_g < 20 && avg_b < 20)) || color_cylinder == "unknown") {
-        // std::cout << "Discard" << std::endl;
+    if ((std::abs(avg_r - avg_g) <= threshold && std::abs(avg_g - avg_b) <= threshold && std::abs(avg_r - avg_b) <= threshold && !(avg_r < 20 && avg_g < 20 && avg_b < 20)) || target_color == "unknown") {
+        //std::cout << "Discard" << std::endl;
         return false;
     }
 
-    std::cout << color_cylinder << std::endl;
+
     // If the average color components are not close to each other, return true
     return true;
 }
@@ -326,16 +326,25 @@ void cloud_cb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     marker.scale.x = 0.1;
     marker.scale.y = 0.1;
     marker.scale.z = 0.1;
-
+    std::cout << "Detected " << target_color << " cylinder" << std::endl;
     int index = -1;
     for (size_t i = 0; i < colorNames.size(); ++i) {
-        if (colorNames[i] == color_cylinder) {
+        if (colorNames[i] == target_color) {
             index = i;
             break;
         }
     }
-
-    marker.color = colorList[index];
+    if (index == -1) {
+        std::cerr << "Color not found" << std::endl;
+        marker.color = colorList[0];
+    } else {
+        marker.color = colorList[index];
+    }
+    // marker.color.r = 0.0f;
+    // marker.color.g = 1.0f;
+    // marker.color.b = 0.0f;
+    // marker.color.a = 1.0f;
+    
 
     // marker.lifetime = rclcpp::Duration(1,0);
     marker.lifetime = rclcpp::Duration(0,0);
@@ -379,6 +388,7 @@ int main(int argc, char** argv) {
     planes_pub = node->create_publisher<sensor_msgs::msg::PointCloud2>("planes", 1);
     cylinder_pub = node->create_publisher<sensor_msgs::msg::PointCloud2>("cylinder", 1);
     marker_pub = node->create_publisher<visualization_msgs::msg::Marker>("detected_cylinder", 1);
+    initializeColorList();
 
     rclcpp::spin(node);
     rclcpp::shutdown();
