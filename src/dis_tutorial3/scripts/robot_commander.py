@@ -121,7 +121,8 @@ class RobotCommander(Node):
 
         self.ring_sub = self.create_subscription(Marker, "/breadcrumbs", self.breadcrumbs_callback, QoSReliabilityPolicy.BEST_EFFORT)
         self.detected_face_sub = self.create_subscription(Marker, "/detected_face_coord", self.detected_face_callback, QoSReliabilityPolicy.BEST_EFFORT)
-
+        self.detected_face_pub = self.create_publisher(Marker, "/detected_face_coord", QoSReliabilityPolicy.BEST_EFFORT)
+        
         self.qr_detect_sub = self.create_subscription(String, '/qr_info', self.qr_callback, 10)
         self.ring_color_sub = self.create_subscription(String, "/ring_color", self.ring_color_callback, 10)
 
@@ -160,15 +161,15 @@ class RobotCommander(Node):
         self.get_logger().info(f"Robot commander has been initialized!")
 
     def detected_face_callback(self, msg):
-    face = []
-    face[0] = msg.pose.position.x
-    face[1] = msg.pose.position.y
-    for detected_face in self.detected_face_list:
-        if abs(face[0] - detected_face[0]) < 0.5 and abs(face[1] - detected_face[1]) < 0.5:
-            return
-
-    self.detected_face_list.append(face)
-    self.latest_people_marker_pose = msg.pose.position
+        face = []
+        face[0] = msg.pose.position.x
+        face[1] = msg.pose.position.y
+        for detected_face in self.detected_face_list:
+            if abs(face[0] - detected_face[0]) < 0.5 and abs(face[1] - detected_face[1]) < 0.5:
+                return
+        self.detected_face_pub(msg)
+        self.detected_face_list.append(face)
+        self.latest_people_marker_pose = msg.pose.position
     
     # saving the face detected and the using it for model to make a prediction
     def save_face_callback(self, msg):
