@@ -149,6 +149,8 @@ class RobotCommander(Node):
         self.bridge = CvBridge()
         self.parking_initiated = False
         self.breadcrumbs_face = None
+        self.detected_face_list = []
+
 
         # if this is not None, then image of Mona is downloaded
         self.mona_link = None
@@ -157,6 +159,17 @@ class RobotCommander(Node):
 
         self.get_logger().info(f"Robot commander has been initialized!")
 
+    def detected_face_callback(self, msg):
+    face = []
+    face[0] = msg.pose.position.x
+    face[1] = msg.pose.position.y
+    for detected_face in self.detected_face_list:
+        if abs(face[0] - detected_face[0]) < 0.5 and abs(face[1] - detected_face[1]) < 0.5:
+            return
+
+    self.detected_face_list.append(face)
+    self.latest_people_marker_pose = msg.pose.position
+    
     # saving the face detected and the using it for model to make a prediction
     def save_face_callback(self, msg):
         # self.get_logger().info("Saving face image...")
